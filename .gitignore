@@ -1,0 +1,14 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+!resources/react-website/**
+
+**/*.pyc
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# Custom ignores
+/docs/openapi.*
