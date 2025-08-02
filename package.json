@@ -8,8 +8,9 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk",
-    "mydeploy": "pip install -r ./resources/lambdas/requirements.txt -t ./resources/lambdas && cd resources/react-website && npm run build && cd ../../ && cdk deploy --require-approval never",
+    "cdkDeploy": "cdk deploy --require-approval never --profile proyectoCDK",
+    "myscripts": "pip install -r ./resources/lambdas/requirements.txt -t ./resources/lambdas && cd resources/react-website && npm run build && cd ../../",
+    "mydeploy": "npm run myscripts && cdk deploy --require-approval never --profile proyectoCDK",
     "mysynth": "npm run build && cdk synth"
   },
   "devDependencies": {

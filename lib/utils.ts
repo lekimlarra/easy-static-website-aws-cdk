@@ -17,6 +17,22 @@ export function listFiles(directory: string): string[] {
 
 /**
  *
+ * @param directory
+ * @returns
+ */
+export function listRuntimes(lambdasList: string[]): string[] {
+  try {
+    console.log("listRuntimes lambdasList:", lambdasList);
+    let runtimes: string[] = lambdasList.filter((lambda) => lambda.includes(".")).map((lambda) => lambda.split(".")[1].toUpperCase());
+    return runtimes;
+  } catch (error) {
+    console.error("Error reading directory:", error);
+    return [];
+  }
+}
+
+/**
+ *
  * @param lambdasList
  * @returns
  */

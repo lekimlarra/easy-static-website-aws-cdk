@@ -88,18 +88,31 @@ export class myApi {
       apiKeyName: apiKeyName,
     });
     basicPlan.addApiKey(basicKey);
+
     // ********************** ENDPOINTS **********************
     for (let lambda of this.allLambdaFiles) {
       // Checks if the file is python
+      const fileName = lambda.split(".")[0];
+      const lambdaName = fileName.split("#").join("-");
+      const endpointPath = utils.createPath(fileName);
+      let runtime = undefined;
+      // Setting the runtime based on the file extension
       if (lambda.endsWith(".py")) {
-        const fileName = lambda.split(".")[0];
-        const lambdaName = fileName.split("#").join("-");
-        const endpointPath = utils.createPath(fileName);
-        console.log(`Creating lambda: ${lambda} with name: ${lambdaName}`);
+        console.log(`Creating PYTHON lambda: ${lambda} with name: ${lambdaName}`);
+        runtime = Runtime.PYTHON_3_13;
+      } else if (lambda.endsWith(".js")) {
+        console.log(`Creating NODE lambda: ${lambda} with name: ${lambdaName}`);
+        runtime = Runtime.NODEJS_22_X;
+      }
+
+      if (runtime === undefined) {
+        console.error("Only python or node JS files are supported for lambdas");
+        continue;
+      } else {
         const thisLambda = new Function(scope, `lambdaFunction-${lambdaName}`, {
           functionName: lambdaName,
-          runtime: Runtime.PYTHON_3_13,
-          handler: `${fileName}.lambda_handler`,
+          runtime: runtime,
+          handler: `${fileName}.handler`,
           environment: {},
           memorySize: 256,
           timeout: cdk.Duration.minutes(1),
@@ -136,8 +149,6 @@ export class myApi {
           });
         }
         this.allLambdas.push(thisLambda);
-      } else {
-        console.error("Only python files are supported for lambdas");
       }
     }
 

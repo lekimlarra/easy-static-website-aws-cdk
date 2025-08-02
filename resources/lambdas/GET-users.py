@@ -2,10 +2,14 @@ import base64, json, os, boto3
 from boto3.dynamodb.conditions import Key, Attr
 from decimal import Decimal
 
+from Utils.utils import sum
+
 dynamodb = boto3.resource('dynamodb')
 
-def lambda_handler(event, context):
+def handler(event, context):
     try:
+        result = sum(3, 5)
+        print("layer working if this is 8:", result)
         res = {
             'statusCode': 200,
             'headers': {

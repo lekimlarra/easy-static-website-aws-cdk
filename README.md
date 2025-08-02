@@ -103,6 +103,19 @@ You should name your file following this nomenclature `METHOD-functionName#PATH_
 
 If you need specific libraries for your lambdas, add a `requirements.txt` file to the lambda's folder and if you run `npm run mydeploy`, it will automatically install and deploy them.
 
+#### Shared code
+
+If you want to share code between your different lambda functions, you can use the files inside the `Utils` folder.
+Just import it in your code and it will work:
+
+```PYTHON
+from Utils.utils import sum
+```
+
+```JAVASCRIPT
+const { sum } = require('Utils/utils');
+```
+
 #### API usage
 
 When creating an API, an API key is automatically generated to limit the usage of the API if necessary.
