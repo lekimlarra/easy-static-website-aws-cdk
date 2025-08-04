@@ -1,7 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import path = require("path");
 import { Construct } from "constructs";
-import { RestApi, LambdaIntegration, Period, ApiKey, Stage, Deployment, CognitoUserPoolsAuthorizer, AuthorizationType, MethodOptions } from "aws-cdk-lib/aws-apigateway";
+import { RestApi, LambdaIntegration, Period, ApiKey, Stage, Deployment, CognitoUserPoolsAuthorizer, AuthorizationType, MethodOptions, Resource } from "aws-cdk-lib/aws-apigateway";
 import { Function, Runtime, Code } from "aws-cdk-lib/aws-lambda";
 // Custom imports
 import * as utils from "./utils";
@@ -143,13 +143,30 @@ export class myApi {
         // Creating the endpoint if lambda exists
         if (thisLambda) {
           const lambdaMethod = fileName.split("-")[0];
-          const endpointPathVariables = utils.getEndpointPathVariables(fileName);
-          console.log(`lambdaMethod: ${lambdaMethod} endpointPath: ${endpointPath}`);
-          console.log(`Endpoint path variables: ${endpointPathVariables}`);
+          const resourcesList = fileName.split("-");
           const currentLambda = new LambdaIntegration(thisLambda, {});
-          let resource = this.api.root.addResource(endpointPath);
-          for (let pathVariable of endpointPathVariables) {
-            resource = resource.addResource(`{${pathVariable}}`);
+          let finalPath = "/" + resourcesList[1];
+          for (let i = 2; i < resourcesList.length; i++) {
+            if (resourcesList[i].includes("#")) {
+              const [path, variable] = resourcesList[i].split("#");
+              finalPath += `/{${variable}}`;
+            } else {
+              finalPath += `/${resourcesList[i]}`;
+            }
+          }
+          console.log(`lambdaMethod: ${lambdaMethod} endpointPath: ${finalPath}`);
+          const parts = finalPath.split("/").filter((p) => p); // elimina los vacíos
+          let resource = this.api.root;
+          // Creating the resource path
+          for (const part of parts) {
+            const existing = resource.node.tryFindChild(part);
+            if (existing) {
+              console.warn("⚠️ Reused path existing");
+              resource = existing as Resource;
+            } else {
+              console.warn("⚠️ NOT reused path");
+              resource = resource.addResource(part);
+            }
           }
 
           let methodOptions: MethodOptions = {
@@ -182,8 +199,8 @@ export class myApi {
             });
           }
 
-          new cdk.CfnOutput(scope, `endpoint-${endpointPath}`, {
-            value: endpointPath,
+          new cdk.CfnOutput(scope, `endpoint-${finalPath}`, {
+            value: finalPath,
           });
         }
         this.allLambdas.push(thisLambda);

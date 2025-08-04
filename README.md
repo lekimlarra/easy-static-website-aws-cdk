@@ -95,13 +95,15 @@ The API will create a stage under the path in the `.env` parameter called `apiPr
 #### API endpoints
 
 To create a new endpoint, add a new file (for now only Python) in the `resources/lambdas` folder.
-You should name your file following this nomenclature `METHOD-functionName#PATH_VARIABLE1#PATH_VARIABLE2.py`, where:
+You should name your file following this nomenclature `METHOD-PATH1-#PATH_VARIABLE1-PATH2-#PATH_VARIABLE2.py/js`, where:
 
 - `METHOD` will be used to create the endpoint with the method specified: `GET`, `POST`, `PUT`, etc.
-- `PATH_VARIABLEX` will be user to create a path variable.
-  For example, `GET-users#userId.py` will create a GET endpoint with a url like `/api/getuser/:userId` with the lambda.
+- `PATH_VARIABLEX` will be used to create a path variable.
+- `PATHX` will add a new path part.
+- `-` separates path parts
+  For example, `GET-trip-#id-summary-detail-#greeting.js` will create a GET endpoint with a url like `/api/trip/{id}/summary/detail/{greeting}` with the lambda.
 
-If you need specific libraries for your lambdas, add a `requirements.txt` file to the lambda's folder and if you run `npm run mydeploy`, it will automatically install and deploy them.
+If you need specific libraries for your lambdas in python, add a `requirements.txt` file to the lambda's folder and if you run `npm run mydeploy`, it will automatically install and deploy them.
 
 #### API endpoint model validation
 
