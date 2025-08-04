@@ -222,6 +222,14 @@ You will need to configure a couple things to make it work for your needs:
 With all these AWS products, we are taking advantage of the free tier, but with enough usage, you will surpase the thresholds for the free tier.
 In [this document](/docs/Free%20tier%20short%20explanation.md) you can see the detailed list of what to expect (as of March2025 and an approximation/simplification, visit AWS pricing website for the real values).
 
+### Testing
+
+We recommend you write code for your lambdas.
+For the moment, we only support testing Node JS lambdas. To do it, you just need to:
+
+1. Create your `.test.ts` or `.test.js` files inside the folder `tests` (follow the template from the file `POST-person.test.js`)
+1. Run it with `npm test`
+
 ### Component Ideas
 
 - Loaders:

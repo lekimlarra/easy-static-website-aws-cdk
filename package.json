@@ -8,6 +8,7 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
+    "test:lambdas": "jest resources/lambdas/test",
     "cdkDeploy": "cdk deploy --require-approval never --profile proyectoCDK",
     "myscripts": "pip install -r ./resources/lambdas/requirements.txt -t ./resources/lambdas && cd resources/react-website && npm run build && cd ../../",
     "mydeploy": "npm run myscripts && cdk deploy --require-approval never --profile proyectoCDK",
@@ -18,7 +19,7 @@
     "@types/node": "^22.7.9",
     "aws-cdk": "2.1000.3",
     "jest": "^29.7.0",
-    "ts-jest": "^29.2.5",
+    "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
     "typescript": "~5.6.3"
   },
