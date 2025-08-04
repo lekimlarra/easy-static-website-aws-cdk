@@ -1,13 +1,20 @@
 import * as fs from "fs";
+import path = require("path");
 
 /**
  *
  * @param directory
+ * @param extension
  * @returns
  */
-export function listFiles(directory: string): string[] {
+export function listFiles(directory: string, extension?: string): string[] {
   try {
-    const files = fs.readdirSync(directory);
+    let files = fs.readdirSync(directory);
+
+    if (extension) {
+      files = files.filter((file) => path.extname(file) === extension);
+    }
+
     return files;
   } catch (error) {
     console.error("Error reading directory:", error);

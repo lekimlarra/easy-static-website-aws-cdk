@@ -1,7 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import path = require("path");
 import { Construct } from "constructs";
-import { RestApi, LambdaIntegration, Period, ApiKey, Stage, Deployment, CognitoUserPoolsAuthorizer, AuthorizationType } from "aws-cdk-lib/aws-apigateway";
+import { RestApi, LambdaIntegration, Period, ApiKey, Stage, Deployment, CognitoUserPoolsAuthorizer, AuthorizationType, MethodOptions } from "aws-cdk-lib/aws-apigateway";
 import { Function, Runtime, Code } from "aws-cdk-lib/aws-lambda";
 // Custom imports
 import * as utils from "./utils";
@@ -12,6 +12,7 @@ const quota = process.env.apiKeyQuota ?? 1000;
 const rateLimit = process.env.apiKeyRateLimit ?? 5;
 const burstLimit = process.env.apyKeyBurstLimit ?? 5;
 const lambdasPath = path.join(__dirname, process.env.lambdasPath ?? "../resources/lambdas");
+const modelsPath = path.join(lambdasPath, "Models");
 const apiKeyName = process.env.apiKeyName ?? "";
 const restApiName = process.env.restApiName ?? "cdk-template-api";
 const apiProdBasePath = process.env.apiProdBasePath ?? "prod";
@@ -19,6 +20,7 @@ const openApiExportType = process.env.openApiExportType ?? "yaml";
 
 export class myApi {
   allLambdaFiles = utils.listFiles(lambdasPath);
+  allApiModelsFiles = utils.listFiles(modelsPath, ".ts");
   metodos = utils.listMethods(this.allLambdaFiles);
   allLambdas: Function[] = [];
   api: RestApi;
@@ -89,6 +91,25 @@ export class myApi {
     });
     basicPlan.addApiKey(basicKey);
 
+    // ********************** API MODELS **********************
+    let modelObjects: any = {};
+    // Importing all models from the Models folder
+    for (const file of this.allApiModelsFiles) {
+      const modelModule = require(path.join(modelsPath, file));
+
+      // Asegúrate de que cada fichero exporta `modelName` y `schema`
+      if (modelModule.modelName && modelModule.schema) {
+        let currentModel = this.api.addModel(modelModule.modelName, {
+          contentType: "application/json",
+          modelName: modelModule.modelName,
+          schema: modelModule.schema,
+        });
+        modelObjects[file.split(".")[0]] = currentModel;
+      } else {
+        console.warn(`Modelo inválido en archivo ${file}`);
+      }
+    }
+
     // ********************** ENDPOINTS **********************
     for (let lambda of this.allLambdaFiles) {
       // Checks if the file is python
@@ -131,16 +152,33 @@ export class myApi {
             resource = resource.addResource(`{${pathVariable}}`);
           }
 
+          let methodOptions: MethodOptions = {
+            apiKeyRequired: true,
+          };
+
+          // Adding the model if it exists
+          if (modelObjects[fileName]) {
+            methodOptions = {
+              ...methodOptions,
+              requestModels: {
+                "application/json": modelObjects[fileName],
+              },
+              requestValidator: this.api.addRequestValidator(`${lambdaName}Validator`, {
+                validateRequestBody: true,
+              }),
+            };
+          }
+
           // If we have cognito, we add the authorizer
           if (thisCognito && authorizerCongnito) {
             resource.addMethod(lambdaMethod, currentLambda, {
+              ...methodOptions,
               authorizer: authorizerCongnito,
               authorizationType: AuthorizationType.COGNITO,
-              apiKeyRequired: true,
             });
           } else {
             resource.addMethod(lambdaMethod, currentLambda, {
-              apiKeyRequired: true,
+              ...methodOptions,
             });
           }
 

@@ -103,6 +103,26 @@ You should name your file following this nomenclature `METHOD-functionName#PATH_
 
 If you need specific libraries for your lambdas, add a `requirements.txt` file to the lambda's folder and if you run `npm run mydeploy`, it will automatically install and deploy them.
 
+#### API endpoint model validation
+
+You can also add a validation for the model of your requests by creating a `.ts` file inside the `Models` folder, like the one you can see in this repo:
+
+```TS
+import { JsonSchemaType } from "aws-cdk-lib/aws-apigateway";
+
+export const modelName = "UserModel";
+export const schema = {
+  type: JsonSchemaType.OBJECT,
+  required: ["id", "name"],
+  properties: {
+    id: { type: JsonSchemaType.STRING },
+    name: { type: JsonSchemaType.STRING },
+  },
+};
+```
+
+You can read all the validations you can make in [AWS documentation](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_apigateway.Model.html)
+
 #### Shared code
 
 If you want to share code between your different lambda functions, you can use the files inside the `Utils` folder.
