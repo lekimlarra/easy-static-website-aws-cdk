@@ -12,3 +12,7 @@ cdk.out
 
 # Custom ignores
 /docs/openapi.*
+
+# Allowing .js files from lambdas
+!tests/
+!resources/lambdas/**/*.js
