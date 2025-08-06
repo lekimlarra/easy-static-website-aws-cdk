@@ -199,7 +199,7 @@ export class myApi {
             });
           }
 
-          new cdk.CfnOutput(scope, `endpoint-${finalPath}`, {
+          new cdk.CfnOutput(scope, `endpoint-${lambdaMethod}-${finalPath}`, {
             value: finalPath,
           });
         }
