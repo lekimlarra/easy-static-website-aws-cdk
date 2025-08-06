@@ -99,7 +99,7 @@ export class myApi {
 
       // Asegúrate de que cada fichero exporta `modelName` y `schema`
       if (modelModule.modelName && modelModule.schema) {
-        let currentModel = this.api.addModel(modelModule.modelName, {
+        let currentModel = this.api.addModel(`${file}-${modelModule.modelName}`, {
           contentType: "application/json",
           modelName: modelModule.modelName,
           schema: modelModule.schema,
