@@ -14,5 +14,5 @@ cdk.out
 /docs/openapi.*
 
 # Allowing .js files from lambdas
-!tests/
+!test/**/*.js
 !resources/lambdas/**/*.js
