@@ -47,6 +47,7 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
       bucketName: bucketName,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       websiteIndexDocument: "index.html",
+      websiteErrorDocument: "index.html",
     });
 
     // ********************** CLOUDFRONT **********************
@@ -63,7 +64,22 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
         origin: new HttpOrigin(`${websiteBucket.bucketWebsiteDomainName}`, {
           protocolPolicy: OriginProtocolPolicy.HTTP_ONLY, // For static website
         }),
+        viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
+      errorResponses: [
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: "/index.html",
+          ttl: cdk.Duration.seconds(0),
+        },
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: "/index.html",
+          ttl: cdk.Duration.seconds(0),
+        },
+      ],
     });
     const origin = new HttpOrigin(`${myAPI.api.restApiId}.execute-api.${this.region}.amazonaws.com`, {});
     cfDistribution.addBehavior(apiProdBasePath, origin, {
