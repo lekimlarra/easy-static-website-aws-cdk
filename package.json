@@ -7,21 +7,24 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run typecheck",
     "test": "jest",
     "test:lambdas": "jest resources/lambdas/test",
-    "cdkDeploy": "cdk deploy --require-approval never --profile proyectoCDK",
+    "cdkDeploy": "npm run typecheck && cdk deploy --require-approval never --profile proyectoCDK",
     "myscripts": "pip install -r ./resources/lambdas/requirements.txt -t ./resources/lambdas && cd resources/react-website && npm run build && cd ../../",
-    "mydeploy": "npm run myscripts && cdk deploy --require-approval never --profile proyectoCDK",
+    "mydeploy": "npm run myscripts && npm run typecheck && cdk deploy --require-approval never --profile proyectoCDK",
     "mysynth": "npm run build && cdk synth"
   },
   "devDependencies": {
+    "@swc/core": "^1.16.1",
+    "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.20.1",
     "aws-cdk": "2.1139.0",
     "jest": "^30.5.0",
-    "ts-jest": "^29.4.12",
-    "ts-node": "^10.9.2",
-    "typescript": "~5.9.3"
+    "tsx": "^4.23.12",
+    "typescript": "~7.0.2"
   },
   "dependencies": {
     "aws-cdk-lib": "2.267.0",
