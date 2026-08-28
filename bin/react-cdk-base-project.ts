@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import * as dotenv from "dotenv";
-dotenv.config();
+dotenv.config({ quiet: true }); // quiet keeps dotenv v17 from printing its banner into "cdk synth" stdout
 import * as cdk from "aws-cdk-lib";
 import { ReactCdkBaseProjectStack } from "../lib/react-cdk-base-project-stack";
 const tagName = process.env.tagName ?? "react-cdk-base-project";
