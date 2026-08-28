@@ -133,11 +133,13 @@ The repository ships with two workflows that run the same npm scripts described 
 | Workflow | When it runs | What it does |
 | --- | --- | --- |
 | [`ci.yml`](.github/workflows/ci.yml) | Every pull request and every push to `main` | Type check, tests, website build, `npm run check:env` and `cdk synth`. It needs no AWS credentials |
-| [`deploy.yml`](.github/workflows/deploy.yml) | Manually from the *Actions* tab, and on every push to `main` | `npm run mydeploy` for the infrastructure, and `npm run s3deploy` for a website only deploy |
+| [`deploy.yml`](.github/workflows/deploy.yml) | Manually from the *Actions* tab, choosing the branch, and on every push to `main` | `npm run mydeploy` for the infrastructure, and `npm run s3deploy` for a website only deploy |
 
-The manual run asks what to deploy: `infrastructure`, `website` or `both`.
+The manual run asks two things: the **branch** (or tag, or commit) to deploy, `main` by default, and **what** to deploy: `infrastructure`, `website` or `both`. The chosen ref is what gets checked out, so you can put a branch in production without merging it first.
 
-> Do not want a deploy on every push? Delete the `push:` trigger of `deploy.yml`, or add required reviewers to the `production` environment in **Settings → Environments** and every run will wait for your approval.
+> Do not confuse the `branch` input with the *Use workflow from* dropdown above it: that one only decides which version of the workflow file runs. What ends up in AWS is the `branch` input.
+
+> Do not want a deploy on every push? Delete the `push:` trigger of `deploy.yml`, or add required reviewers to the `production` environment in **Settings → Environments** and every run will wait for your approval. That same screen has a *Deployment branches* rule: if you restrict it, remember that it also limits which branches the `branch` input accepts.
 
 ### 1. Configure the variables
 
@@ -217,7 +219,7 @@ Run `cdk bootstrap` once from your laptop before the first deploy from GitHub: b
 
 ### 3. Deploy
 
-Go to **Actions → Deploy → Run workflow**, choose what to deploy and confirm. At the end of the run, the job summary shows the stack outputs: the CloudFront url, your custom domain, the bucket and the distribution id.
+Go to **Actions → Deploy → Run workflow**, choose the branch and what to deploy, and confirm. At the end of the run, the job summary shows the stack outputs: the CloudFront url, your custom domain, the bucket and the distribution id.
 
 ## Infrastructure
 

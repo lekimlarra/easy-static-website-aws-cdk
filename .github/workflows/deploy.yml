@@ -5,12 +5,17 @@ name: Deploy
 #   npm run s3deploy   -> check the config, run the tests, build, upload to S3
 #                         and invalidate the CloudFront cache
 #
-# Triggered manually from the Actions tab (choose what to deploy) and on every
-# push to main. Remove the "push" trigger below, or add required reviewers to
-# the "production" environment, if you prefer every deploy to be approved.
+# Triggered manually from the Actions tab (choose the branch and what to
+# deploy) and on every push to main. Remove the "push" trigger below, or add
+# required reviewers to the "production" environment, if you prefer every
+# deploy to be approved.
 on:
   workflow_dispatch:
     inputs:
+      branch:
+        description: Branch, tag or commit to deploy
+        type: string
+        default: main
       target:
         description: What to deploy
         type: choice
@@ -41,7 +46,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      # The branch chosen when the workflow was started, and the branch that was
+      # pushed otherwise. The composite actions below come from this checkout,
+      # so the deploy always uses the tooling of the branch being deployed.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+
+      - name: Say what is being deployed
+        run: |
+          echo "Deploying $(git rev-parse --short HEAD) from '${{ inputs.branch || github.ref_name }}'." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: ./.github/actions/setup-project
 
@@ -92,7 +107,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      # The branch chosen when the workflow was started, and the branch that was
+      # pushed otherwise. The composite actions below come from this checkout,
+      # so the deploy always uses the tooling of the branch being deployed.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+
+      - name: Say what is being deployed
+        run: |
+          echo "Deploying $(git rev-parse --short HEAD) from '${{ inputs.branch || github.ref_name }}'." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: ./.github/actions/setup-project
 
