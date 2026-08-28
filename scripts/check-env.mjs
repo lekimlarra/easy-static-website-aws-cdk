@@ -28,6 +28,19 @@ const required = [
 if (isTrue("createCognito")) {
   required.push(["userPoolName", "Required because createCognito=true."], ["userPoolClientName", "Required because createCognito=true."], ["yourDomain", "Required because createCognito=true: it builds the Cognito callback URLs."]);
 }
+if (isTrue("createGoogleLogin")) {
+  required.push(
+    ["googleClientId", "Required because createGoogleLogin=true: the OAuth client id from the Google Cloud console."],
+    ["cognitoDomainPrefix", "Required because createGoogleLogin=true: Google redirects back to the Cognito hosted UI domain."]
+  );
+  if (!isTrue("createCognito")) {
+    console.error("createGoogleLogin=true has no effect while createCognito is not true: there would be no user pool to attach Google to.");
+    process.exit(1);
+  }
+  if (!value("googleClientSecret") && !value("googleClientSecretName")) {
+    required.push(["googleClientSecretName", "Required because createGoogleLogin=true: a Secrets Manager secret holding the Google client secret (or set googleClientSecret to the raw value)."]);
+  }
+}
 if (value("customDomainNames")) {
   required.push(["httpCertificate", "Required to serve customDomainNames: an ACM certificate ARN issued in us-east-1."]);
 }
@@ -47,6 +60,15 @@ if (value("httpCertificate") && !value("httpCertificate").startsWith("arn:aws:ac
 if (/ACCOUNT|UUID|your-bucket-name-here|your-custom-url|your-email@/.test(Object.values(process.env).join(" "))) {
   warnings.push("Some values still look like the placeholders from .env.template.");
 }
+if (value("googleClientSecret") && !value("googleClientSecretName")) {
+  warnings.push("googleClientSecret is set as raw text: it will be readable inside the CloudFormation template. Prefer googleClientSecretName pointing at a Secrets Manager secret.");
+}
+if (value("cognitoDomainPrefix") && !/^[a-z0-9-]+$/.test(value("cognitoDomainPrefix"))) {
+  warnings.push("cognitoDomainPrefix may only contain lowercase letters, numbers and hyphens.");
+}
+if (/aws|amazon|cognito/.test(value("cognitoDomainPrefix"))) {
+  warnings.push('cognitoDomainPrefix cannot contain "aws", "amazon" or "cognito": AWS rejects those prefixes.');
+}
 if (!isTrue("appDeployedOnce")) {
   warnings.push('appDeployedOnce is not "true": the budget will be created by this deploy. Set it to "true" afterwards or the next deploy will fail.');
 }
@@ -59,6 +81,7 @@ console.log(`Region:  ${value("awsRegion") || "(not set)"}`);
 console.log(`Account: ${value("awsAccountId") || "(resolved from the current credentials)"}`);
 console.log(`Bucket:  ${value("bucketName") || "(not set)"}`);
 console.log(`Website upload: ${deployWebsiteWithCdk ? "CDK BucketDeployment" : 'AWS CLI ("npm run s3deploy")'}`);
+console.log(`Login: ${isTrue("createCognito") ? `Cognito${isTrue("createGoogleLogin") ? " + Google" : ""}` : "disabled"}`);
 
 for (const warning of warnings) console.warn(`WARNING  ${warning}`);
 

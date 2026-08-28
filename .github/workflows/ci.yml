@@ -39,6 +39,9 @@ jobs:
       - name: Run the infrastructure tests
         run: npm test
 
+      - name: Run the lambda tests
+        run: npm run test:python
+
       - name: Build the website
         run: npm run build:website
 
@@ -56,11 +59,3 @@ jobs:
       - name: Synthesize the CloudFormation template
         if: env.AWS_REGION != ''
         run: npm run mysynth
-
-      - name: Upload the synthesized template
-        if: env.AWS_REGION != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: cdk-out
-          path: cdk.out/*.template.json
-          retention-days: 7

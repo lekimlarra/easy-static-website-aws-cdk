@@ -6,7 +6,7 @@ A plug-and-play CDK project to deploy a full static website in AWS with API, dat
 
 - 🖼 Static website with CDN
 - 🧠 Serverless API with auto-routes
-- 🧑‍💻 Cognito user authentication
+- 🧑‍💻 Cognito user authentication, with optional Google login
 - 🧾 Budget control with alert and (soon) auto cut-off
 - 📦 Fully configurable via `.env`, with a template and a setup script
 - 🌐 Your own domain with HTTPS and an automatic Route 53 record
@@ -22,7 +22,7 @@ This CDK project will automatically create for you:
   - Blocking all internet access to this project once you reach `budgetStopServiceLimit` (PENDING)
 - Cloudfront layer for caching and centralizing internet access to your app
 - A DynamoDB database to take advantage of the AWS free tier
-- Creating cognito pool and pool client to connect your user website
+- Creating cognito pool and pool client to connect your user website, with Google as an optional identity provider
 - Serving your own domain over HTTPS with an ACM certificate and a Route 53 alias record
 - Diagram of the infrastructure that will be deployed
 - GitHub Actions workflows to test, synthesize and deploy the project without a local AWS login
@@ -55,6 +55,7 @@ Follow these steps to get started:
 | `npm run github:config` | Prints your configuration split into the two blocks GitHub Actions expects |
 | `npm run login` | `aws sso login` with the profile configured in `awsProfile` |
 | `npm test` | Type checks the CDK app and runs the tests under `test/` |
+| `npm run test:python` | Runs the unittest suite of the python lambdas |
 | `npm run build:website` | Builds the static website |
 | `npm run build:lambdas` | Installs the python `requirements.txt` into the lambdas folder |
 | `npm run tests_and_compile` | Checks the configuration, runs the tests and builds the website and the lambdas |
@@ -110,6 +111,16 @@ createCognito - Boolean, if true, will create a cognito pool and client
 userPoolName - Pool name
 userPoolClientName - Pool client name
 cognitoCallBackPath - The path url for call back when using cognito to manage your users. We recommend leaving the default "/auth/callback"
+cognitoDomainPrefix - Prefix of the hosted login page, "<prefix>.auth.<region>.amazoncognito.com". Required for Google login
+cognitoExtraCallbackUrls - Extra URLs allowed after login, comma separated. Typically your localhost while developing
+cognitoExtraLogoutUrls - Extra URLs allowed after logout, comma separated
+
+# Google login (needs createCognito=true)
+createGoogleLogin - Boolean, if true, adds Google as an identity provider
+googleClientId - Client id of the OAuth client you created in the Google Cloud console
+googleClientSecretName - Name or ARN of a Secrets Manager secret holding the client secret. Recommended
+googleClientSecretField - JSON field inside that secret, if it is a JSON secret
+googleClientSecret - The client secret as raw text. Simpler, but it ends up inside the CloudFormation template
 
 # Website deployment
 deployWebsiteWithCdk - Boolean. "true" uploads the website from the CDK stack, "false" leaves it to "npm run s3deploy"
@@ -445,6 +456,81 @@ The distribution id used by the invalidation is read from the `CloudFrontDistrib
 If you want to have users with login in your website, you can set the parameter `createCognito` to `true` in the `.env` file. This will create a Cognito Pool and a Cognito Pool Client that you can use to manage your user sessions.
 In the file [Cognito on react.md](/docs/Cognito%20on%20react.md) you can see a detailed explanation on how to connect your react website to cognito in a very simple way.
 
+#### Login with Google
+
+Cognito can delegate the login to Google, so your users press one button instead of inventing yet another password. Set `createGoogleLogin=true` and fill in the values below; Cognito then hosts the login page, redirects to Google, and hands your website back the usual Cognito tokens. Nothing changes for the API: the id token that arrives is a normal Cognito one.
+
+**Before anything, pick your login domain.** Federated login needs the Cognito hosted UI, and its address is predictable, so you can register it in Google before the first deploy:
+
+```
+https://<cognitoDomainPrefix>.auth.<awsRegion>.amazoncognito.com
+```
+
+Set `cognitoDomainPrefix` to something unique in your region. It only accepts lowercase letters, numbers and hyphens, and AWS rejects any prefix containing `aws`, `amazon` or `cognito`.
+
+**1. Create the OAuth client in Google**
+
+1. Open the [Google Cloud console](https://console.cloud.google.com/) and create or pick a project.
+1. In **APIs & Services → OAuth consent screen**, choose *External*, fill in the app name and the support email, and add the `openid`, `.../auth/userinfo.email` and `.../auth/userinfo.profile` scopes. While the app is in *Testing*, only the accounts listed as test users can log in: add yours, and publish the app when you go live.
+1. In **APIs & Services → Credentials → Create credentials → OAuth client ID**, pick *Web application* and fill in:
+   - **Authorised JavaScript origins**: `https://<prefix>.auth.<region>.amazoncognito.com`
+   - **Authorised redirect URIs**: `https://<prefix>.auth.<region>.amazoncognito.com/oauth2/idpresponse`
+
+   That `/oauth2/idpresponse` path is Cognito's, not yours: Google returns there, and Cognito is the one that then redirects to your `cognitoCallBackPath`. After a deploy, `npm run outputs` prints this exact URL as `GoogleAuthorisedRedirectUri`, so you can check it matches.
+1. Copy the **client ID** and the **client secret**.
+
+**2. Configure the project**
+
+```properties
+createCognito=true
+createGoogleLogin=true
+cognitoDomainPrefix=my-login-prefix
+googleClientId=1234567890-abcdefg.apps.googleusercontent.com
+# While developing, so the login can come back to your dev server
+cognitoExtraCallbackUrls=http://localhost:3000/auth/callback
+cognitoExtraLogoutUrls=http://localhost:3000/
+```
+
+The client secret has two homes, pick one:
+
+- **Secrets Manager (recommended).** Store it once and reference it by name. CloudFormation resolves it at deploy time, so the value never appears in the synthesized template:
+
+  ```bash
+  aws secretsmanager create-secret --name google-oauth --secret-string '{"clientSecret":"THE_SECRET"}'
+  ```
+
+  ```properties
+  googleClientSecretName=google-oauth
+  googleClientSecretField=clientSecret
+  ```
+
+  A secret costs around 0.40 USD per month, which is the only part of this feature outside the free tier.
+
+- **Raw value.** `googleClientSecret=THE_SECRET`. Free, but the secret ends up inside the CloudFormation template, readable by anyone who can read the stack. `npm run check:env` warns you when you take this route.
+
+Either way, run `npm run check:env`: it refuses to continue if the domain prefix, the client id or the secret are missing, and reminds you that `createGoogleLogin` does nothing while `createCognito` is false.
+
+**3. In GitHub Actions**
+
+`googleClientId` and `cognitoDomainPrefix` are not secret, so they belong in the `APP_CONFIG` variable. `googleClientSecret` is, so it goes in the `APP_SECRETS` secret; `npm run github:config` already sorts it into the right block. With the Secrets Manager option there is nothing to add to GitHub at all: only the name of the secret, which is not sensitive.
+
+**What the deploy creates**
+
+| Output | What it is for |
+| --- | --- |
+| `CognitoHostedUiDomain` | The base URL of the hosted login page |
+| `GoogleAuthorisedRedirectUri` | Paste it in the Google OAuth client, it has to match exactly |
+| `CognitoLoginUrl` | The login page with both options, Google and email plus password |
+| `GoogleLoginUrl` | Goes straight to Google, skipping the Cognito page. This is the one behind a "Continue with Google" button |
+
+[Cognito on react.md](/docs/Cognito%20on%20react.md) shows how to send the user there and how to handle the redirect back.
+
+**Two things worth knowing**
+
+- Cognito confirms federated users itself, so the `PostConfirmation` trigger never fires for them. The stack wires the same lambda to `PreSignUp` when Google is enabled, which is the trigger that does fire, so a Google user also lands in your `users` table.
+- Cognito does not merge accounts on its own. Somebody who signed up with email and password and later presses "Continue with Google" with the same address gets an "account already exists" error. Linking the two requires an `AdminLinkProviderForUser` call, which this template does not do for you.
+
+
 #### Trigger for new users
 
 We have added a lambda function [here](/lib/Cognito/lambdaNewUser.py) that will be triggered every time a new user registers in your Cognito user pool.
@@ -465,6 +551,8 @@ For the moment, we only support testing Node JS lambdas. To do it, you just need
 
 1. Create your `.test.ts` or `.test.js` files inside the folder `tests` (follow the template from the file `POST-person.test.js`)
 1. Run it with `npm test`
+
+The same folder also holds the tests of the infrastructure itself, written with [`aws-cdk-lib/assertions`](https://docs.aws.amazon.com/cdk/v2/guide/testing.html): they synthesize the stack with different configurations and check the resulting template, which is how the Google login is verified without deploying anything. Python lambdas are tested with `unittest` in `test/test_*.py` and run with `npm run test:python`.
 
 These tests, together with the type check and a `cdk synth`, run on every pull request through the `CI` workflow, and again before every deploy.
 

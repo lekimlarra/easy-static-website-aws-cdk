@@ -26,6 +26,13 @@ Event received:
 }
 '''
 
+# Cognito calls a different trigger depending on how the user arrived:
+# a native sign up is confirmed by the user and fires PostConfirmation, while a
+# user coming from Google is confirmed by Cognito itself and only ever fires
+# PreSignUp. Both mean "a new user exists", so both store the profile.
+NEW_USER_TRIGGERS = ("PostConfirmation_ConfirmSignUp", "PreSignUp_ExternalProvider")
+
+
 def lambda_handler(event, context):
     print("Received event:", json.dumps(event))
     cognito_user_id = event['userName']
@@ -37,9 +44,17 @@ def lambda_handler(event, context):
     family_name = user_attributes.get('family_name')
     print(f"New registered user: {user_name} {family_name} with email: {user_email} and cognito user id: {cognito_user_id}")
 
+    # A federated user has already proved to Google who they are, so there is
+    # nothing left to confirm. Without this the sign in stops on a code prompt
+    # that will never be answered.
+    if triggerSource == "PreSignUp_ExternalProvider":
+        event.setdefault('response', {})
+        event['response']['autoConfirmUser'] = True
+        event['response']['autoVerifyEmail'] = bool(user_email)
+
     # TODO Add your logic here
     # Example storing in a dynamoDB table
-    if triggerSource == "PostConfirmation_ConfirmSignUp":
+    if triggerSource in NEW_USER_TRIGGERS:
         try:
             dynamodb = boto3.resource('dynamodb')
             table = dynamodb.Table('users')

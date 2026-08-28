@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import { envFile } from "./env.mjs";
 
 // Keys that identify or notify you, or that expose the account id.
-const SENSITIVE = ["awsAccountId", "httpCertificate", "notificationEmail"];
+const SENSITIVE = ["awsAccountId", "httpCertificate", "notificationEmail", "googleClientSecret"];
 // Keys that only make sense on a developer machine.
 const LOCAL_ONLY = ["awsProfile"];
 
