@@ -3,8 +3,11 @@ import path = require("path");
 import { Construct } from "constructs";
 import { Bucket } from "aws-cdk-lib/aws-s3";
 import { aws_s3_deployment } from "aws-cdk-lib";
-import { AllowedMethods, CachePolicy, Distribution, OriginProtocolPolicy, OriginRequestCookieBehavior, OriginRequestHeaderBehavior, OriginRequestPolicy, OriginRequestQueryStringBehavior, ViewerProtocolPolicy } from "aws-cdk-lib/aws-cloudfront";
+import { AllowedMethods, CachePolicy, Distribution, DistributionProps, OriginProtocolPolicy, OriginRequestCookieBehavior, OriginRequestHeaderBehavior, OriginRequestPolicy, OriginRequestQueryStringBehavior, ViewerProtocolPolicy } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
+import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
+import { ARecord, HostedZone, RecordTarget } from "aws-cdk-lib/aws-route53";
+import { CloudFrontTarget } from "aws-cdk-lib/aws-route53-targets";
 // Custom imports
 import { myApi } from "./api";
 import { budget } from "./budget";
@@ -17,6 +20,18 @@ const httpCertificate = process.env.httpCertificate ?? "";
 const yourDomain = process.env.yourDomain ?? "";
 const apiProdBasePath = (process.env.apiProdBasePath ?? "prod") + "/*";
 const createCognito = process.env.createCognito == "true";
+// Domains served by the CloudFront distribution, on top of the *.cloudfront.net one.
+const customDomainNames = (process.env.customDomainNames ?? "")
+  .split(",")
+  .map((domain) => domain.trim())
+  .filter(Boolean);
+const createDnsRecord = process.env.createDnsRecord == "true";
+const hostedZoneDomain = process.env.hostedZoneDomain ?? "";
+const dnsRecordName = process.env.dnsRecordName ?? "";
+// When false the stack only creates the bucket and the website is uploaded with
+// the AWS CLI ("npm run s3deploy"). That path is much faster for big sites and
+// lets a content-only change be shipped without a CloudFormation update.
+const deployWebsiteWithCdk = (process.env.deployWebsiteWithCdk ?? "true") !== "false";
 
 export class ReactCdkBaseProjectStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -59,6 +74,19 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
       cookieBehavior: OriginRequestCookieBehavior.none(),
     });
 
+    // Serving your own domain needs an ACM certificate issued in us-east-1.
+    // Without both values CloudFront keeps answering on its *.cloudfront.net name.
+    let customDomainProps: Partial<DistributionProps> = {};
+    if (customDomainNames.length > 0) {
+      if (!httpCertificate) {
+        throw new Error('customDomainNames is set but httpCertificate is empty. CloudFront needs an ACM certificate issued in "us-east-1" to serve a custom domain.');
+      }
+      customDomainProps = {
+        domainNames: customDomainNames,
+        certificate: Certificate.fromCertificateArn(this, "ImportedCert", httpCertificate),
+      };
+    }
+
     const cfDistribution = new Distribution(this, "myDist", {
       defaultBehavior: {
         origin: new HttpOrigin(`${websiteBucket.bucketWebsiteDomainName}`, {
@@ -66,6 +94,7 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
         }),
         viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
+      ...customDomainProps,
       errorResponses: [
         {
           httpStatus: 403,
@@ -90,14 +119,37 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
       //originRequestPolicy: apiKeyPolicy,
     });
 
+    // ********************** WEBSITE - ROUTE 53 **********************
+    // Points your domain at the distribution. The hosted zone lookup needs the
+    // stack to know its account and region (see bin/react-cdk-base-project.ts).
+    if (createDnsRecord) {
+      if (!hostedZoneDomain) {
+        throw new Error("createDnsRecord is true but hostedZoneDomain is empty. Set it to the Route 53 hosted zone that owns your domain.");
+      }
+      const zone = HostedZone.fromLookup(this, "HostedZone", {
+        domainName: hostedZoneDomain,
+      });
+      new ARecord(this, "AliasRecord", {
+        zone,
+        recordName: dnsRecordName, // empty means the apex of the hosted zone
+        target: RecordTarget.fromAlias(new CloudFrontTarget(cfDistribution)),
+      });
+    }
+
     // ********************** WEBSITE - S3 DEPLOYMENT **********************
     // Deploying website files to S3 bucket with a cloudfront cache invalidation!
-    const deployment = new aws_s3_deployment.BucketDeployment(this, "DeployWebsite", {
-      sources: [aws_s3_deployment.Source.asset(path.join(__dirname, websiteBuildPath))],
-      destinationBucket: websiteBucket,
-      distribution: cfDistribution,
-      distributionPaths: ["/*"],
-    });
+    if (deployWebsiteWithCdk) {
+      const deployment = new aws_s3_deployment.BucketDeployment(this, "DeployWebsite", {
+        sources: [aws_s3_deployment.Source.asset(path.join(__dirname, websiteBuildPath))],
+        destinationBucket: websiteBucket,
+        distribution: cfDistribution,
+        distributionPaths: ["/*"],
+        // Static assets are content hashed by the bundler, so they can be cached
+        // for a long time; the distribution invalidation above covers index.html.
+        cacheControl: [aws_s3_deployment.CacheControl.setPublic(), aws_s3_deployment.CacheControl.maxAge(cdk.Duration.days(30)), aws_s3_deployment.CacheControl.immutable()],
+        retainOnDelete: false,
+      });
+    }
 
     // ********************** BUDGET **********************
     const myBudget = new budget(this, id, props);
@@ -106,8 +158,21 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
     new cdk.CfnOutput(this, "BucketUrl", {
       value: websiteBucket.bucketWebsiteUrl,
     });
+    new cdk.CfnOutput(this, "BucketName", {
+      value: websiteBucket.bucketName,
+    });
     new cdk.CfnOutput(this, "CloudFrontUrl", {
       value: cfDistribution.domainName,
     });
+    // Read by "npm run cacheInvalidation" so the distribution id never has to be
+    // hardcoded in a script or in a GitHub secret.
+    new cdk.CfnOutput(this, "CloudFrontDistributionId", {
+      value: cfDistribution.distributionId,
+    });
+    if (customDomainNames.length > 0) {
+      new cdk.CfnOutput(this, "CustomDomainUrls", {
+        value: customDomainNames.map((domain) => `https://${domain}`).join(", "),
+      });
+    }
   }
 }
