@@ -52,6 +52,7 @@ Follow these steps to get started:
 | --- | --- |
 | `npm run setup` | Creates `.env` from `.env.template` and installs every dependency. Add `-- --no-install` to only handle the `.env` |
 | `npm run check:env` | Validates your configuration before anything is deployed |
+| `npm run github:config` | Prints your configuration split into the two blocks GitHub Actions expects |
 | `npm run login` | `aws sso login` with the profile configured in `awsProfile` |
 | `npm test` | Type checks the CDK app and runs the tests under `test/` |
 | `npm run build:website` | Builds the static website |
@@ -141,7 +142,36 @@ The manual run asks two things: the **branch** (or tag, or commit) to deploy, `m
 
 > Do not want a deploy on every push? Delete the `push:` trigger of `deploy.yml`, or add required reviewers to the `production` environment in **Settings → Environments** and every run will wait for your approval. That same screen has a *Deployment branches* rule: if you restrict it, remember that it also limits which branches the `branch` input accepts.
 
-### 1. Configure the variables
+### 1. Where each value comes from
+
+If you already deploy from your laptop, **your `.env` is the answer**: the workflows use exactly the same keys. Run
+
+```bash
+npm run github:config
+```
+
+and it prints your configuration already split into the two blocks below, ready to copy and paste. It leaves out `awsProfile` (a runner has no AWS profile) and tells you if something a runner cannot guess is missing.
+
+If you are starting from scratch, this is where each value comes from:
+
+| Value | How to get it |
+| --- | --- |
+| `awsAccountId` | `aws sts get-caller-identity --query Account --output text`, or the 12 digit number under your name in the top right of the AWS console |
+| `awsRegion` | The region you deploy to, for example `eu-west-3`. `aws configure get region` shows your default one. It must match the region of the stack you already have: another region means another, separate stack |
+| `bucketName` | You choose it, but it has to be unique across **every** AWS account. If the stack is already deployed, `npm run outputs` prints the current one |
+| `notificationEmail` | Your email. AWS sends a subscription confirmation the first time the budget topic is created: you have to click it or you will get no alerts |
+| `budgetName`, `restApiName`, `snsTopicName`, `tagName` | Names you pick. Changing one after a deploy replaces the resource, so choose them once |
+| `budgetFirstNotificationLimit`, `budgetStopServiceLimit` | Monthly limits in USD for the warning email and for the (pending) cut-off |
+| `appDeployedOnce` | `false` until the budget exists, `true` from then on. A budget can only be created once |
+| `httpCertificate` | ARN of an ACM certificate **in `us-east-1`**. List the ones you have with `aws acm list-certificates --region us-east-1 --query "CertificateSummaryList[].[DomainName,CertificateArn]" --output table`, or request one with `aws acm request-certificate --domain-name example.com --subject-alternative-names www.example.com --validation-method DNS --region us-east-1` and validate it before deploying |
+| `customDomainNames` | The domains that certificate covers, comma separated |
+| `hostedZoneDomain` | Your zone in Route 53: `aws route53 list-hosted-zones --query "HostedZones[].Name" --output text` |
+| `cloudFrontDistributionId` | Optional. `npm run outputs` prints it after a deploy; leaving it empty just means one extra CloudFormation call |
+| `AWS_ROLE_ARN` | The IAM role you create in step 3 below |
+
+Whatever you end up with, `npm run check:env` tells you if it is complete before you paste anything into GitHub.
+
+### 2. Configure the variables
 
 Instead of adding thirty separate entries, the workflows rebuild your `.env` from two settings, so what you have locally is what runs in CI.
 
@@ -186,14 +216,19 @@ httpCertificate=arn:aws:acm:us-east-1:111122223333:certificate/xxxxxxxx-xxxx-xxx
 notificationEmail=you@example.com
 ```
 
-`awsProfile` must **not** be part of `APP_CONFIG`: the runner has no AWS profile, its credentials come from the role. The scripts already ignore the profile when they find credentials in the environment.
+Two things to keep in mind:
 
-### 2. Give GitHub access to your AWS account
+- `awsProfile` must **not** be part of `APP_CONFIG`: the runner has no AWS profile, its credentials come from the role. The scripts already ignore the profile when they find credentials in the environment.
+- A variable or a secret is not versioned and not visible in a diff. When you change a value there, change it in your `.env` too, or the two will drift apart.
+
+Prefer a variable per key? The workflows also honour anything you add to the `env:` block of a job: a value set there wins over the `.env` rebuilt from `APP_CONFIG`, and an empty one is ignored so it falls back instead of blanking the setting.
+
+### 3. Give GitHub access to your AWS account
 
 The recommended option is OIDC: GitHub receives a short lived token for each run and no permanent key is ever stored in the repository.
 
-1. In **IAM → Identity providers**, add an OpenID Connect provider with the URL `https://token.actions.githubusercontent.com` and the audience `sts.amazonaws.com` (only once per account).
-1. Create a role trusted by that provider, restricted to this repository:
+1. In **IAM → Identity providers**, add an OpenID Connect provider with the URL `https://token.actions.githubusercontent.com` and the audience `sts.amazonaws.com`. Only once per account: if it is already there, reuse it.
+1. In **IAM → Roles → Create role → Web identity**, pick that provider and create a role trusted only by this repository. Replace the account id and `YOUR_USER/YOUR_REPO`:
 
    ```json
    {
@@ -212,12 +247,54 @@ The recommended option is OIDC: GitHub receives a short lived token for each run
    }
    ```
 
-1. Attach a policy that lets the role deploy. The simplest one for a personal project is to allow `sts:AssumeRole` on the CDK bootstrap roles, `arn:aws:iam::111122223333:role/cdk-*`, which is what `cdk deploy` uses.
-1. Put the ARN of the role in the `AWS_ROLE_ARN` secret.
+   The `sub` condition is the important line: without it any repository on GitHub could assume your role. Narrow it further to `repo:YOUR_USER/YOUR_REPO:ref:refs/heads/main` if you only ever deploy from `main`.
 
-Run `cdk bootstrap` once from your laptop before the first deploy from GitHub: bootstrapping needs administrator rights that the deployment role does not need to have.
+1. Attach a permissions policy. `cdk deploy` works by assuming the roles that `cdk bootstrap` created, and the website deploy talks to S3 and CloudFront directly, so this covers both:
 
-### 3. Deploy
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "AssumeTheCdkBootstrapRoles",
+         "Effect": "Allow",
+         "Action": "sts:AssumeRole",
+         "Resource": "arn:aws:iam::111122223333:role/cdk-*"
+       },
+       {
+         "Sid": "ReadTheStackOutputs",
+         "Effect": "Allow",
+         "Action": ["cloudformation:DescribeStacks", "ssm:GetParameter"],
+         "Resource": "*"
+       },
+       {
+         "Sid": "WebsiteOnlyDeploys",
+         "Effect": "Allow",
+         "Action": ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "cloudfront:CreateInvalidation"],
+         "Resource": ["arn:aws:s3:::YOUR_BUCKET_NAME", "arn:aws:s3:::YOUR_BUCKET_NAME/*", "arn:aws:cloudfront::111122223333:distribution/*"]
+       }
+     ]
+   }
+   ```
+
+   The last statement is only needed if you use `npm run s3deploy` (`deployWebsiteWithCdk=false` or the `website` target); with the CDK upload the first one is enough.
+
+1. Copy the ARN of the role into the `AWS_ROLE_ARN` secret:
+
+   ```bash
+   aws iam get-role --role-name YOUR_ROLE_NAME --query Role.Arn --output text
+   ```
+
+Run `cdk bootstrap` once from your laptop before the first deploy from GitHub: bootstrapping creates those `cdk-*` roles and needs administrator rights that the deployment role does not need to have.
+
+<details>
+<summary>Without OIDC: access keys</summary>
+
+Create an IAM user, attach the same permissions policy, generate an access key in **Security credentials → Create access key**, and store the two halves in the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` secrets. The workflows use them automatically when `AWS_ROLE_ARN` is empty. It is the less safe option: the key does not expire on its own, so rotate it from time to time.
+
+</details>
+
+### 4. Deploy
 
 Go to **Actions → Deploy → Run workflow**, choose the branch and what to deploy, and confirm. At the end of the run, the job summary shows the stack outputs: the CloudFront url, your custom domain, the bucket and the distribution id.
 

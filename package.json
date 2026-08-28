@@ -7,6 +7,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "check:env": "node scripts/check-env.mjs",
+    "github:config": "node scripts/github-config.mjs",
     "login": "node scripts/aws-exec.mjs aws sso login",
     "build": "tsc",
     "watch": "tsc -w",
