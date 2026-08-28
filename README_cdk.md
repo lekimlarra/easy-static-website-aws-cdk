@@ -8,7 +8,9 @@ A plug-and-play CDK project to deploy a full static website in AWS with API, dat
 - 🧠 Serverless API with auto-routes
 - 🧑‍💻 Cognito user authentication
 - 🧾 Budget control with alert and (soon) auto cut-off
-- 📦 Fully configurable via `.env`
+- 📦 Fully configurable via `.env`, with a template and a setup script
+- 🌐 Your own domain with HTTPS and an automatic Route 53 record
+- 🤖 Continuous integration and one click deploys from GitHub Actions
 
 This CDK project will automatically create for you:
 
@@ -21,45 +23,74 @@ This CDK project will automatically create for you:
 - Cloudfront layer for caching and centralizing internet access to your app
 - A DynamoDB database to take advantage of the AWS free tier
 - Creating cognito pool and pool client to connect your user website
+- Serving your own domain over HTTPS with an ACM certificate and a Route 53 alias record
 - Diagram of the infrastructure that will be deployed
+- GitHub Actions workflows to test, synthesize and deploy the project without a local AWS login
 
 Soon:
 
-- Automatic deploy from GitHub actions and secrets
 - Dashboard in CloudWatch (may incur costs!! 💶💵🤑)
 - Observability (incurs costs!! 💶💵🤑)
 - Alerting (incurs costs!! 💶💵🤑) - Errors 4XX or 5XX, spike in number of connections...
-- Route 53 domain url
-- HTTPS certificate
 
 ## Getting started
 
 Follow these steps to get started:
 
-1. Download and install depencencies `npm`, `aws cli` and `cdk`
-1. Configure your local environment to login to AWS. This project will deploy to the region you have as default
-1. Review the `.env` file and change the values to whatever you want (In a section below all the parameters are explained)
-1. Run `npm i` in the main folder of this project and inside the website react folder.
+1. Download and install dependencies `npm`, `aws cli` and `cdk`
+1. Run `npm run setup`. It creates your own `.env` from `.env.template` and installs the dependencies of the CDK app and of the website
+1. Edit `.env` with your values (every parameter is explained below) and check them with `npm run check:env`
+1. Configure your local environment to login to AWS: `npm run login` runs `aws sso login` with the profile in `awsProfile`
+1. You might need to run `cdk bootstrap` in your AWS account if this is the first time you use CDK
 1. Write your react website (or change it by any other static website, like angular for example)
 1. Create and write your API endpoints in the lambda folder
-1. If you want to filter your budget for only the resources on this project, you will need to create
+1. Deploy with `npm run mydeploy`, or push to `main` and let GitHub Actions do it for you
 
 ### Important commands
 
-- `aws sso login` to login to AWS before doing a deploy
-- `npm run build` compile the react website (run it in the folder of the website configured in `websiteBuildPath`)
-- `cdk deploy` to deploy the infrastructure
-- You might need to run `cdk bootstrap` in your AWS account if this is the first time you use CDK.
-- There is a custom command to compile the website and deploy the cdk stack together --> `npm run mydeploy`. This command will also install the python libraries that are in your `requirements.txt` in your lambda's folder.
+| Command | What it does |
+| --- | --- |
+| `npm run setup` | Creates `.env` from `.env.template` and installs every dependency. Add `-- --no-install` to only handle the `.env` |
+| `npm run check:env` | Validates your configuration before anything is deployed |
+| `npm run login` | `aws sso login` with the profile configured in `awsProfile` |
+| `npm test` | Type checks the CDK app and runs the tests under `test/` |
+| `npm run build:website` | Builds the static website |
+| `npm run build:lambdas` | Installs the python `requirements.txt` into the lambdas folder |
+| `npm run tests_and_compile` | Checks the configuration, runs the tests and builds the website and the lambdas |
+| `npm run mysynth` | Synthesizes the CloudFormation template without deploying |
+| `npm run cdkDiff` | Shows what a deploy would change |
+| `npm run mydeploy` | The full deploy: `tests_and_compile` + `cdk deploy` |
+| `npm run mydeploy-force` | Same, skipping the tests |
+| `npm run s3deploy` | Website only deploy: build, `s3 sync`, mime type fix and CloudFront invalidation |
+| `npm run cacheInvalidation` | Invalidates the CloudFront cache on its own |
+| `npm run outputs` | Prints the outputs of the deployed stack (urls, distribution id...) |
+
+None of these commands hardcode an AWS profile any more: they read `awsProfile` and `awsRegion` from your configuration, and use the credentials already present in the environment when there are any. That is what lets GitHub Actions run the exact same scripts.
+
+## Environment variables
+
+The `.env` file is **git ignored**: it holds values that belong to your account and it must never be committed. The file under version control is [`.env.template`](.env.template), which lists every supported key with a safe default.
+
+- `npm run setup` copies the template into `.env` the first time, and never overwrites an existing one.
+- Run it again after pulling changes: it reports the keys that were added to the template and are missing from your file.
+- `npm run check:env` validates the result. It fails when a required value is missing, and warns about the usual mistakes (a certificate outside `us-east-1`, values still holding the placeholders from the template, `appDeployedOnce` not set yet).
+
+Precedence is always the same, locally and in CI: **a variable already present in the environment wins over the `.env` file**. That is what allows GitHub Actions to inject the configuration without any change in the code.
 
 ### Customization
 
 In the file `.env` you can customize your application. These are the values:
 
 ```properties
+# AWS account / CLI
+awsProfile - Local AWS CLI profile used by the deploy scripts. Leave it empty when the credentials come from the environment (this is what GitHub Actions does)
+awsRegion - Region to deploy to. Required
+awsAccountId - Account id. Optional, defaults to the account of the current credentials. Required for the Route 53 lookup
+stackName - CloudFormation stack name. Changing it after the first deploy creates a brand new stack, so only touch it before deploying for the first time
+
 # Your variables
 bucketName - The name of the S3 bucket you will create
-# Soon httpCertificate=arn:aws:acm:us-east-1:ACCOUNT:certificate/UUID
+httpCertificate - ARN of an ACM certificate, issued in us-east-1, for your custom domain
 yourDomain - Your url domain starting with https://
 notificationEmail - Your email to receive notifications from the budgets
 budgetFirstNotificationLimit - Limit in $ for the monthly expense where, if exceeded, you will receive an email
@@ -67,11 +98,23 @@ budgetStopServiceLimit - Limit in $ for the monthly expense where, if exceeded, 
 budgetName - The name of the budget
 restApiName - The name of your API
 
+# Custom domain (optional)
+customDomainNames - Comma separated list of domains served by CloudFront, for example "example.com,www.example.com"
+hostedZoneDomain - The Route 53 hosted zone that owns your domain, for example "example.com"
+dnsRecordName - Sub domain for the alias record. Empty means the apex of the zone
+createDnsRecord - Boolean, if true creates the Route 53 A record pointing at CloudFront
+
 # Cognito
 createCognito - Boolean, if true, will create a cognito pool and client
 userPoolName - Pool name
 userPoolClientName - Pool client name
 cognitoCallBackPath - The path url for call back when using cognito to manage your users. We recommend leaving the default "/auth/callback"
+
+# Website deployment
+deployWebsiteWithCdk - Boolean. "true" uploads the website from the CDK stack, "false" leaves it to "npm run s3deploy"
+websiteBuildPath - Path to the built website, relative to lib/ (used by the stack)
+websiteDistPath - Path to the built website, relative to the repo root (used by "npm run s3deploy")
+cloudFrontDistributionId - Optional. Skips a CloudFormation lookup when invalidating the cache
 
 # API key - See api key documentation to know more about quota, burst and rate limits
 apiKeyName - Name of the api key you will create
@@ -82,6 +125,99 @@ apyKeyBurstLimit=5
 # Single time creation tags
 appDeployedOnce - This is important, a Boolean. The Budget can only be created once, so after your first "cdk deploy", you must set this to "true"
 ```
+
+## Deploying from GitHub Actions
+
+The repository ships with two workflows that run the same npm scripts described above, so a deploy from GitHub and a deploy from your laptop do exactly the same thing.
+
+| Workflow | When it runs | What it does |
+| --- | --- | --- |
+| [`ci.yml`](.github/workflows/ci.yml) | Every pull request and every push to `main` | Type check, tests, website build, `npm run check:env` and `cdk synth`. It needs no AWS credentials |
+| [`deploy.yml`](.github/workflows/deploy.yml) | Manually from the *Actions* tab, and on every push to `main` | `npm run mydeploy` for the infrastructure, and `npm run s3deploy` for a website only deploy |
+
+The manual run asks what to deploy: `infrastructure`, `website` or `both`.
+
+> Do not want a deploy on every push? Delete the `push:` trigger of `deploy.yml`, or add required reviewers to the `production` environment in **Settings → Environments** and every run will wait for your approval.
+
+### 1. Configure the variables
+
+Instead of adding thirty separate entries, the workflows rebuild your `.env` from two settings, so what you have locally is what runs in CI.
+
+**Settings → Secrets and variables → Actions → Variables → New repository variable**
+
+| Name | Content |
+| --- | --- |
+| `APP_CONFIG` | The non sensitive part of your `.env`, pasted as is (`awsRegion`, `bucketName`, `restApiName`, `budgetName`, `customDomainNames`, `deployWebsiteWithCdk`, `appDeployedOnce`...) |
+
+**Settings → Secrets and variables → Actions → Secrets → New repository secret**
+
+| Name | Content |
+| --- | --- |
+| `APP_SECRETS` | The sensitive lines of your `.env`: `awsAccountId`, `httpCertificate` and `notificationEmail`. Every value in this block is masked in the logs |
+| `AWS_ROLE_ARN` | ARN of the IAM role GitHub assumes through OIDC. **Recommended** |
+| `AWS_ACCESS_KEY_ID` | Only if you do not use OIDC |
+| `AWS_SECRET_ACCESS_KEY` | Only if you do not use OIDC |
+
+Both blocks are plain `.env` content, one `key=value` per line, comments allowed:
+
+```properties
+# APP_CONFIG (repository variable)
+awsRegion=eu-west-3
+bucketName=my-unique-bucket-name
+restApiName=my-api
+budgetName=my-budget
+budgetFirstNotificationLimit=50
+budgetStopServiceLimit=100
+tagName=my-project
+snsTopicName=my-budget-topic
+apiProdBasePath=api
+deployWebsiteWithCdk=true
+websiteBuildPath=../resources/react-website/build
+websiteDistPath=resources/react-website/build
+appDeployedOnce=true
+```
+
+```properties
+# APP_SECRETS (repository secret)
+awsAccountId=111122223333
+httpCertificate=arn:aws:acm:us-east-1:111122223333:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+notificationEmail=you@example.com
+```
+
+`awsProfile` must **not** be part of `APP_CONFIG`: the runner has no AWS profile, its credentials come from the role. The scripts already ignore the profile when they find credentials in the environment.
+
+### 2. Give GitHub access to your AWS account
+
+The recommended option is OIDC: GitHub receives a short lived token for each run and no permanent key is ever stored in the repository.
+
+1. In **IAM → Identity providers**, add an OpenID Connect provider with the URL `https://token.actions.githubusercontent.com` and the audience `sts.amazonaws.com` (only once per account).
+1. Create a role trusted by that provider, restricted to this repository:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Principal": { "Federated": "arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com" },
+         "Action": "sts:AssumeRoleWithWebIdentity",
+         "Condition": {
+           "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+           "StringLike": { "token.actions.githubusercontent.com:sub": "repo:YOUR_USER/YOUR_REPO:*" }
+         }
+       }
+     ]
+   }
+   ```
+
+1. Attach a policy that lets the role deploy. The simplest one for a personal project is to allow `sts:AssumeRole` on the CDK bootstrap roles, `arn:aws:iam::111122223333:role/cdk-*`, which is what `cdk deploy` uses.
+1. Put the ARN of the role in the `AWS_ROLE_ARN` secret.
+
+Run `cdk bootstrap` once from your laptop before the first deploy from GitHub: bootstrapping needs administrator rights that the deployment role does not need to have.
+
+### 3. Deploy
+
+Go to **Actions → Deploy → Run workflow**, choose what to deploy and confirm. At the end of the run, the job summary shows the stack outputs: the CloudFront url, your custom domain, the bucket and the distribution id.
 
 ## Infrastructure
 
@@ -206,6 +342,25 @@ The distribution has 2 behaviours:
 
 > Make sure to avoid collisions between the path to the API and any URL on your static website.
 
+#### Custom domain and HTTPS
+
+By default CloudFront answers on its own `*.cloudfront.net` name. To serve your own domain:
+
+1. Request a certificate in ACM **in the `us-east-1` region** (CloudFront accepts no other region) for your domain, and validate it.
+1. Put its ARN in `httpCertificate` and list the domains in `customDomainNames`, separated by commas.
+1. If your domain is hosted in Route 53, set `hostedZoneDomain` to the zone, `createDnsRecord=true` and, when you want a sub domain, `dnsRecordName`. The stack then creates the A record pointing at the distribution.
+
+`createDnsRecord` needs the stack to know its account and its region, so `awsAccountId` and `awsRegion` must be set. The result of the hosted zone lookup is cached in `cdk.context.json`: commit that file so a CI run can synthesize the stack without querying AWS.
+
+#### Website deployment strategies
+
+There are two ways of getting your files into the bucket, controlled by `deployWebsiteWithCdk`:
+
+- `true` (default): the CDK stack uploads the website as part of the deploy and invalidates the CloudFront cache. One command, one source of truth. Files are uploaded with a `public, max-age=30 days, immutable` cache header, which is what you want for the hashed assets of a bundler.
+- `false`: the stack only creates the bucket, and the website is uploaded with `npm run s3deploy`, which runs the tests, builds the site, does an `aws s3 sync --delete`, fixes the mime type of the `.js` files (some systems upload them as `text/plain`) and invalidates the CloudFront cache. This is considerably faster for a big site and lets you ship a content change without a CloudFormation update.
+
+The distribution id used by the invalidation is read from the `CloudFrontDistributionId` output of the stack, so there is nothing to hardcode. Set `cloudFrontDistributionId` if you prefer to skip that lookup.
+
 ### Cognito
 
 If you want to have users with login in your website, you can set the parameter `createCognito` to `true` in the `.env` file. This will create a Cognito Pool and a Cognito Pool Client that you can use to manage your user sessions.
@@ -231,6 +386,8 @@ For the moment, we only support testing Node JS lambdas. To do it, you just need
 
 1. Create your `.test.ts` or `.test.js` files inside the folder `tests` (follow the template from the file `POST-person.test.js`)
 1. Run it with `npm test`
+
+These tests, together with the type check and a `cdk synth`, run on every pull request through the `CI` workflow, and again before every deploy.
 
 ### Component Ideas
 
