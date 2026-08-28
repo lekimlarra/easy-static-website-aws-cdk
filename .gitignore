@@ -10,6 +10,13 @@ node_modules
 .cdk.staging
 cdk.out
 
+# Environment files: they hold account specific values and must never be
+# committed. Use .env.template as the reference and "npm run setup" to create
+# your own copy.
+.env
+.env.*
+!.env.template
+
 # Custom ignores
 /docs/openapi.*
 
