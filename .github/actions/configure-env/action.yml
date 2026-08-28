@@ -1,0 +1,65 @@
+name: Configure the project environment
+description: >-
+  Rebuilds the .env file the npm scripts expect from the repository
+  configuration, so the workflows run exactly the same commands as a developer
+  laptop. Values coming from the secret input are masked in the logs.
+
+inputs:
+  config:
+    description: Non sensitive part of the .env file (repository variable APP_CONFIG).
+    required: false
+    default: ""
+  secrets:
+    description: Sensitive part of the .env file (repository secret APP_SECRETS).
+    required: false
+    default: ""
+
+outputs:
+  aws-region:
+    description: The awsRegion value found in the configuration.
+    value: ${{ steps.write.outputs.aws-region }}
+
+runs:
+  using: composite
+  steps:
+    - id: write
+      shell: bash
+      env:
+        APP_CONFIG: ${{ inputs.config }}
+        APP_SECRETS: ${{ inputs.secrets }}
+      run: |
+        set -uo pipefail
+
+        # GitHub masks a multi line secret as a whole, not the individual lines
+        # it is made of, so every value of the secret block is registered here.
+        if [ -n "$APP_SECRETS" ]; then
+          while IFS= read -r line; do
+            case "$line" in ''|\#*) continue ;; esac
+            value="${line#*=}"
+            if [ ${#value} -ge 4 ]; then
+              echo "::add-mask::$value"
+            fi
+          done <<< "$APP_SECRETS"
+        fi
+
+        : > .env
+        if [ -n "$APP_CONFIG" ]; then
+          printf '%s\n' "$APP_CONFIG" >> .env
+        fi
+        if [ -n "$APP_SECRETS" ]; then
+          printf '%s\n' "$APP_SECRETS" >> .env
+        fi
+
+        keys=$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*=' .env || true)
+        echo "Wrote .env with ${keys:-0} key(s)."
+        if [ "${keys:-0}" -eq 0 ]; then
+          echo "::warning::No configuration found. Set the APP_CONFIG repository variable and the APP_SECRETS repository secret (see the README)."
+        fi
+
+        # The region has to be known before any script reads .env, because
+        # configure-aws-credentials takes it as an input.
+        region=$(grep -E '^[[:space:]]*awsRegion=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' \r" || true)
+        echo "aws-region=${region}" >> "$GITHUB_OUTPUT"
+        if [ -n "$region" ]; then
+          echo "AWS_REGION=${region}" >> "$GITHUB_ENV"
+        fi

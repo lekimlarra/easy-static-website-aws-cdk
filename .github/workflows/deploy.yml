@@ -1,0 +1,117 @@
+name: Deploy
+
+# Deploys to AWS by running the very same npm scripts used locally:
+#   npm run mydeploy   -> check the config, run the tests, build, "cdk deploy"
+#   npm run s3deploy   -> check the config, run the tests, build, upload to S3
+#                         and invalidate the CloudFront cache
+#
+# Triggered manually from the Actions tab (choose what to deploy) and on every
+# push to main. Remove the "push" trigger below, or add required reviewers to
+# the "production" environment, if you prefer every deploy to be approved.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to deploy
+        type: choice
+        default: infrastructure
+        options:
+          - infrastructure
+          - website
+          - both
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # needed to request the OIDC token used to assume the AWS role
+
+jobs:
+  infrastructure:
+    name: Deploy the CDK stack
+    # A push always deploys the infrastructure; a manual run only when asked to.
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'infrastructure' || inputs.target == 'both'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-project
+
+      - name: Configure the environment
+        id: config
+        uses: ./.github/actions/configure-env
+        with:
+          config: ${{ vars.APP_CONFIG }}
+          secrets: ${{ secrets.APP_SECRETS }}
+
+      - name: Validate the configuration
+        run: npm run check:env
+
+      - uses: ./.github/actions/aws-login
+        with:
+          aws-region: ${{ steps.config.outputs.aws-region }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # "npm run mydeploy" chains these two steps into one command locally.
+      # They are split here so the logs say which half failed, and so the diff
+      # below runs against an already built website.
+      - name: Run the tests and build the website and the lambdas
+        run: npm run tests_and_compile
+
+      - name: Show what is going to change
+        run: npm run cdkDiff
+        continue-on-error: true # the diff is informative, it must not block the deploy
+
+      - name: Deploy the stack
+        run: npm run cdkDeploy
+
+      - name: Publish the stack outputs
+        if: always()
+        run: npm run outputs
+        continue-on-error: true
+
+  website:
+    name: Deploy the website content
+    # Only on demand: with deployWebsiteWithCdk=true the stack already uploads
+    # the website, this job is the fast path for content only changes.
+    needs: [infrastructure]
+    if: |
+      !cancelled() && needs.infrastructure.result != 'failure'
+      && github.event_name == 'workflow_dispatch'
+      && (inputs.target == 'website' || inputs.target == 'both')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-project
+
+      - name: Configure the environment
+        id: config
+        uses: ./.github/actions/configure-env
+        with:
+          config: ${{ vars.APP_CONFIG }}
+          secrets: ${{ secrets.APP_SECRETS }}
+
+      - name: Validate the configuration
+        run: npm run check:env
+
+      - uses: ./.github/actions/aws-login
+        with:
+          aws-region: ${{ steps.config.outputs.aws-region }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Upload the website and invalidate the CDN cache
+        run: npm run s3deploy

@@ -1,0 +1,66 @@
+name: CI
+
+# Runs on every pull request and on every push to main. It executes the same
+# npm scripts a developer runs locally, so a green run means "this would have
+# deployed cleanly".
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Type check, test and synthesize
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-project
+
+      # Pull requests coming from a fork get no secrets, so the .env ends up
+      # empty there and the steps that need configuration are skipped below.
+      - name: Configure the environment
+        uses: ./.github/actions/configure-env
+        with:
+          config: ${{ vars.APP_CONFIG }}
+          secrets: ${{ secrets.APP_SECRETS }}
+
+      - name: Type check the CDK app
+        run: npm run typecheck
+
+      - name: Run the infrastructure tests
+        run: npm test
+
+      - name: Build the website
+        run: npm run build:website
+
+      - name: Install the lambda dependencies
+        run: npm run build:lambdas
+
+      - name: Validate the configuration
+        if: env.AWS_REGION != ''
+        run: npm run check:env
+
+      # No credentials are needed to synthesize, only the configuration: this
+      # is the cheapest way of catching a broken stack before a deploy.
+      # With createDnsRecord=true the hosted zone lookup does need AWS, so
+      # commit cdk.context.json after the first deploy to keep this step offline.
+      - name: Synthesize the CloudFormation template
+        if: env.AWS_REGION != ''
+        run: npm run mysynth
+
+      - name: Upload the synthesized template
+        if: env.AWS_REGION != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-out
+          path: cdk.out/*.template.json
+          retention-days: 7
