@@ -1,8 +1,12 @@
 name: CI
 
-# Runs on every pull request and on every push to main. It executes the same
-# npm scripts a developer runs locally, so a green run means "this would have
-# deployed cleanly".
+# The merge gate. Everything a pull request has to pass before it can be merged
+# runs here, and none of it needs AWS credentials: the checks run against the
+# fixture configuration in .github/ci.env, so a green run means "this code is
+# sound", never "this account is configured".
+#
+# Protect the branch with the "CI" check (the last job below), not with the
+# individual jobs: it stays valid when jobs are added, renamed or skipped.
 on:
   pull_request:
   push:
@@ -17,21 +21,29 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Type check, test and synthesize
+  checks:
+    name: Tests and synth
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # .env carries the bucket, the certificate and the notification email of
+      # whoever committed it. It used to be tracked; this makes sure it never
+      # comes back.
+      - name: Refuse a tracked .env
+        run: |
+          if git ls-files --error-unmatch .env > /dev/null 2>&1; then
+            echo "::error file=.env::.env is tracked by git and holds account specific values. Remove it with \"git rm --cached .env\" and keep .env.template as the reference."
+            exit 1
+          fi
+          echo ".env is not tracked."
+
       - uses: ./.github/actions/setup-project
 
-      # Pull requests coming from a fork get no secrets, so the .env ends up
-      # empty there and the steps that need configuration are skipped below.
-      - name: Configure the environment
-        uses: ./.github/actions/configure-env
-        with:
-          config: ${{ vars.APP_CONFIG }}
-          secrets: ${{ secrets.APP_SECRETS }}
+      - name: Use the CI fixture configuration
+        run: |
+          cp .github/ci.env .env
+          echo "Using .github/ci.env: the gate must not depend on anyone's AWS account."
 
       - name: Type check the CDK app
         run: npm run typecheck
@@ -42,20 +54,115 @@ jobs:
       - name: Run the lambda tests
         run: npm run test:python
 
+      - name: Run the website tests
+        run: npm run test:website
+
       - name: Build the website
         run: npm run build:website
 
       - name: Install the lambda dependencies
         run: npm run build:lambdas
 
-      - name: Validate the configuration
-        if: env.AWS_REGION != ''
+      - name: Validate the fixture configuration
         run: npm run check:env
 
-      # No credentials are needed to synthesize, only the configuration: this
-      # is the cheapest way of catching a broken stack before a deploy.
-      # With createDnsRecord=true the hosted zone lookup does need AWS, so
-      # commit cdk.context.json after the first deploy to keep this step offline.
+      # Synthesizing needs no credentials, only configuration, and it is the
+      # cheapest way of catching a stack that would fail on deploy.
       - name: Synthesize the CloudFormation template
-        if: env.AWS_REGION != ''
         run: npm run mysynth
+
+      # The optional features live behind flags, so the run above never reaches
+      # them. These values are fake on purpose: nothing is deployed, and the
+      # template is not published anywhere.
+      - name: Synthesize with every optional feature enabled
+        env:
+          createCognito: "true"
+          yourDomain: https://example.com
+          userPoolName: ci-user-pool
+          userPoolClientName: ci-user-pool-client
+          cognitoCallBackPath: /auth/callback
+          logoutPath: /
+          createGoogleLogin: "true"
+          cognitoDomainPrefix: ci-synth-check
+          cognitoExtraCallbackUrls: http://localhost:3000/auth/callback
+          googleClientId: ci.apps.googleusercontent.com
+          googleClientSecret: ci-not-a-real-secret
+          customDomainNames: example.com,www.example.com
+          httpCertificate: arn:aws:acm:us-east-1:111122223333:certificate/11111111-2222-3333-4444-555555555555
+          deployWebsiteWithCdk: "false"
+        run: npm run check:env && npm run mysynth
+
+  configuration:
+    name: Repository configuration
+    # Nothing to validate until the repository has been configured, and a pull
+    # request from a fork gets no secrets at all.
+    if: vars.APP_CONFIG != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-project
+        with:
+          install-website: "false"
+
+      - name: Configure the environment
+        uses: ./.github/actions/configure-env
+        with:
+          config: ${{ vars.APP_CONFIG }}
+          secrets: ${{ secrets.APP_SECRETS }}
+
+      # Catches a missing variable or a certificate in the wrong region now,
+      # instead of half way through the next deploy.
+      - name: Validate the configuration a deploy would use
+        run: npm run check:env
+
+  audit:
+    name: Dependency audit
+    # Informational only: a transitive advisory in the toolchain must not block
+    # a merge. Read it in the job summary and act when it is your dependency.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Audit
+        run: |
+          {
+            echo "### Dependency audit"
+            echo
+            echo '#### CDK app'
+            echo '```'
+            npm audit --audit-level=high || true
+            echo '```'
+            echo '#### Website'
+            echo '```'
+            (cd resources/react-website && npm audit --audit-level=high) || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ci:
+    name: CI
+    # The single check to require in the branch protection rules. It fails when
+    # anything that actually ran failed, and tolerates the jobs that were
+    # legitimately skipped.
+    needs: [checks, configuration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect the results
+        run: |
+          echo "checks:        ${{ needs.checks.result }}"
+          echo "configuration: ${{ needs.configuration.result }}"
+
+          if [ "${{ needs.checks.result }}" != "success" ]; then
+            echo "::error::The tests or the synth did not pass."
+            exit 1
+          fi
+          case "${{ needs.configuration.result }}" in
+            success|skipped) ;;
+            *) echo "::error::The repository configuration is not valid." ; exit 1 ;;
+          esac
+          echo "Everything green, this pull request can be merged."

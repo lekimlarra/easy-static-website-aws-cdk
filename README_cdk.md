@@ -144,7 +144,7 @@ The repository ships with two workflows that run the same npm scripts described 
 
 | Workflow | When it runs | What it does |
 | --- | --- | --- |
-| [`ci.yml`](.github/workflows/ci.yml) | Every pull request and every push to `main` | Type check, tests, website build, `npm run check:env` and `cdk synth`. It needs no AWS credentials |
+| [`ci.yml`](.github/workflows/ci.yml) | Every pull request and every push to `main` | The merge gate: type check, every test suite, website build and `cdk synth`. It needs no AWS credentials |
 | [`deploy.yml`](.github/workflows/deploy.yml) | Manually from the *Actions* tab, choosing the branch, and on every push to `main` | `npm run mydeploy` for the infrastructure, and `npm run s3deploy` for a website only deploy |
 
 The manual run asks two things: the **branch** (or tag, or commit) to deploy, `main` by default, and **what** to deploy: `infrastructure`, `website` or `both`. The chosen ref is what gets checked out, so you can put a branch in production without merging it first.
@@ -152,6 +152,32 @@ The manual run asks two things: the **branch** (or tag, or commit) to deploy, `m
 > Do not confuse the `branch` input with the *Use workflow from* dropdown above it: that one only decides which version of the workflow file runs. What ends up in AWS is the `branch` input.
 
 > Do not want a deploy on every push? Delete the `push:` trigger of `deploy.yml`, or add required reviewers to the `production` environment in **Settings → Environments** and every run will wait for your approval. That same screen has a *Deployment branches* rule: if you restrict it, remember that it also limits which branches the `branch` input accepts.
+
+### The merge gate
+
+`ci.yml` is what decides whether a pull request is safe to merge. It runs, in one job:
+
+| Step | What it protects against |
+| --- | --- |
+| Refuse a tracked `.env` | Somebody committing their bucket, certificate and email again |
+| `npm run typecheck` | A CDK app that does not compile |
+| `npm test` | The infrastructure tests, which synthesize the stack in several configurations and assert on the resulting template |
+| `npm run test:python` | The lambda logic, `unittest` with a stubbed boto3 |
+| `npm run test:website` | The tests of the static website |
+| `npm run build:website` + `npm run build:lambdas` | A website or a `requirements.txt` that does not build |
+| `npm run check:env` | A configuration the stack would reject |
+| `npm run mysynth` | A stack that would fail on `cdk deploy` |
+| A second synth with every optional feature on | Cognito, Google login and the custom domain, which the first synth never reaches because they live behind flags |
+
+None of it touches AWS. The checks run against [`.github/ci.env`](.github/ci.env), a fixture with fake but valid values, so the gate says "this code is sound" and never "this account is configured". Add a key there whenever the stack starts requiring a new one.
+
+Two more jobs run alongside:
+
+- **Repository configuration** validates the real `APP_CONFIG` and `APP_SECRETS` with `check:env`, catching a missing variable or a certificate in the wrong region before the next deploy. It is skipped when the repository is not configured yet, and on pull requests from forks, which get no secrets.
+- **Dependency audit** publishes `npm audit` in the job summary. It never fails the build: an advisory in a transitive build dependency is not a reason to block a merge.
+
+**To require it before merging**, go to **Settings → Branches → Add branch ruleset** (or *Branch protection rules*), target `main`, tick *Require status checks to pass* and pick **`CI`**. That is the last job of the workflow, and the only one worth protecting with: it collects the results of the others, so it keeps working when jobs are added, renamed or legitimately skipped. Requiring the individual jobs instead leaves a pull request stuck forever the day one of them is skipped.
+
 
 ### 1. Where each value comes from
 
@@ -552,7 +578,7 @@ For the moment, we only support testing Node JS lambdas. To do it, you just need
 1. Create your `.test.ts` or `.test.js` files inside the folder `tests` (follow the template from the file `POST-person.test.js`)
 1. Run it with `npm test`
 
-The same folder also holds the tests of the infrastructure itself, written with [`aws-cdk-lib/assertions`](https://docs.aws.amazon.com/cdk/v2/guide/testing.html): they synthesize the stack with different configurations and check the resulting template, which is how the Google login is verified without deploying anything. Python lambdas are tested with `unittest` in `test/test_*.py` and run with `npm run test:python`.
+The same folder also holds the tests of the infrastructure itself, written with [`aws-cdk-lib/assertions`](https://docs.aws.amazon.com/cdk/v2/guide/testing.html): they synthesize the stack with different configurations and check the resulting template, which is how the Google login is verified without deploying anything. Python lambdas are tested with `unittest` in `test/test_*.py` and run with `npm run test:python`. All of it runs on every pull request through the merge gate described above.
 
 These tests, together with the type check and a `cdk synth`, run on every pull request through the `CI` workflow, and again before every deploy.
 
