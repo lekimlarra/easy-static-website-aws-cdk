@@ -1,0 +1,43 @@
+name: Set up the project
+description: Installs Node, Python and every dependency the npm deploy scripts need.
+
+inputs:
+  node-version:
+    description: Node.js version used to run the CDK app and the website build.
+    required: false
+    default: "22"
+  python-version:
+    description: Python version used to install the lambda requirements.
+    required: false
+    default: "3.13"
+  install-website:
+    description: Install the dependencies of resources/react-website too.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          resources/react-website/package-lock.json
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install CDK dependencies
+      shell: bash
+      run: npm ci
+
+    - name: Install website dependencies
+      if: inputs.install-website == 'true'
+      shell: bash
+      working-directory: resources/react-website
+      run: npm ci
