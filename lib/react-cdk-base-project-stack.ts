@@ -32,6 +32,8 @@ const dnsRecordName = process.env.dnsRecordName ?? "";
 // the AWS CLI ("npm run s3deploy"). That path is much faster for big sites and
 // lets a content-only change be shipped without a CloudFormation update.
 const deployWebsiteWithCdk = (process.env.deployWebsiteWithCdk ?? "true") !== "false";
+// CloudFront serves a custom domain only with an ACM certificate from us-east-1.
+const ACM_CERTIFICATE_ARN = /^arn:aws:acm:us-east-1:\d{12}:certificate\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class ReactCdkBaseProjectStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -79,7 +81,15 @@ export class ReactCdkBaseProjectStack extends cdk.Stack {
     let customDomainProps: Partial<DistributionProps> = {};
     if (customDomainNames.length > 0) {
       if (!httpCertificate) {
-        throw new Error('customDomainNames is set but httpCertificate is empty. CloudFront needs an ACM certificate issued in "us-east-1" to serve a custom domain.');
+        throw new Error(`customDomainNames is set to "${customDomainNames.join(", ")}" but httpCertificate is empty. CloudFront needs an ACM certificate issued in "us-east-1" to serve a custom domain.\n` + "Leave customDomainNames empty to deploy now and be served on the *.cloudfront.net name instead.");
+      }
+      // CloudFormation accepts any string here and CloudFront rejects it minutes
+      // later, mid-deploy, with a message that does not say which value was
+      // wrong. Checking the shape up front turns that into a synth error, and
+      // catches the case that actually happens: the placeholder ARN that
+      // .env.template ships is still in the .env file.
+      if (!ACM_CERTIFICATE_ARN.test(httpCertificate)) {
+        throw new Error(`httpCertificate is not a certificate ARN CloudFront can use: "${httpCertificate}".\n` + 'Expected "arn:aws:acm:us-east-1:<12 digit account>:certificate/<uuid>". CloudFront only accepts certificates issued in "us-east-1", whatever the region of the stack.\n' + 'List the ones you have with: aws acm list-certificates --region us-east-1 --query "CertificateSummaryList[].[DomainName,CertificateArn]" --output table\n' + "Leave customDomainNames empty to deploy without a custom domain.");
       }
       customDomainProps = {
         domainNames: customDomainNames,
