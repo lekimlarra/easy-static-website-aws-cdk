@@ -6,13 +6,12 @@
 // developers keep using a .env file. Nothing in the repo has to know which of
 // the two is in play.
 import * as fs from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import { envFile, envTemplateFile } from "./paths.mjs";
 
-export const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-export const envFile = path.join(repoRoot, ".env");
-export const envTemplateFile = path.join(repoRoot, ".env.template");
+// Re-exported so that every other script goes on importing them from here,
+// while the bootstrap can take them from a module that needs no dependencies.
+export { repoRoot, envFile, envTemplateFile } from "./paths.mjs";
 
 /** True when the process already carries AWS credentials (CI, SSO exports...). */
 export function hasAmbientCredentials() {

@@ -10,7 +10,10 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { repoRoot, envFile, envTemplateFile } from "./env.mjs";
+// Deliberately not from env.mjs: that module imports dotenv, and on a fresh
+// clone there is no node_modules for it to come from yet. The bootstrap has to
+// be able to run before the thing it bootstraps.
+import { repoRoot, envFile, envTemplateFile } from "./paths.mjs";
 
 const skipInstall = process.argv.includes("--no-install");
 const websiteDir = path.join(repoRoot, "resources", "react-website");
@@ -44,8 +47,27 @@ if (!skipInstall) {
   for (const directory of [repoRoot, websiteDir]) {
     if (!fs.existsSync(path.join(directory, "package.json"))) continue;
     console.log(`\nInstalling dependencies in ${path.relative(repoRoot, directory) || "."} ...`);
+    const options = { cwd: directory, stdio: "inherit", shell: process.platform === "win32" };
     const lockfile = fs.existsSync(path.join(directory, "package-lock.json"));
-    execFileSync("npm", [lockfile ? "ci" : "install"], { cwd: directory, stdio: "inherit", shell: process.platform === "win32" });
+    if (!lockfile) {
+      execFileSync("npm", ["install"], options);
+      continue;
+    }
+    try {
+      execFileSync("npm", ["ci"], options);
+    } catch {
+      // "npm ci" refuses to install when the lock file does not describe the
+      // tree that this platform and this npm version resolve. The optional
+      // native and wasm bindings that jest and swc carry for every
+      // architecture are the usual reason, so the same lock file is accepted
+      // on the machine that wrote it and rejected on the next one. That is a
+      // stale lock file, not a broken checkout, and it also leaves the clone
+      // with no node_modules at all, because "npm ci" empties the folder
+      // before it gives up. Carrying on is far more useful than a stack trace.
+      console.warn('\n"npm ci" would not accept the lock file. Falling back to "npm install".');
+      console.warn("If package-lock.json changes, commit it: it was out of date.\n");
+      execFileSync("npm", ["install"], options);
+    }
   }
 }
 
