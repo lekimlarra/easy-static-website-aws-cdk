@@ -12,6 +12,13 @@ function filterJson(files: Array<string>): Array<string> {
 const databasePath = path.join(__dirname, process.env.databasePath ?? "../resources/databases");
 const defaultReadCapacity = 1;
 const defaultWriteCapacity = 1;
+// Retaining the tables protects data that a stack delete would otherwise take
+// with it, and it is the right default once there is any. It has a cost while
+// there is none: a deploy that fails after the tables are created leaves them
+// behind, outside the stack, and every retry then stops with "already exists"
+// until they are deleted by hand. "destroy" keeps the early deploys repeatable;
+// switch it back before the tables hold anything worth keeping.
+const removalPolicy = (process.env.tableRemovalPolicy ?? "retain").trim().toLowerCase() === "destroy" ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN;
 
 export class database {
   allDBFiles = filterJson(utils.listFiles(databasePath));
@@ -43,7 +50,7 @@ export class database {
           sortKey: { name: sk, type: skType },
           partitionKey: { name: pk, type: pkType },
           tableName: tableName,
-          removalPolicy: cdk.RemovalPolicy.RETAIN,
+          removalPolicy: removalPolicy,
           readCapacity: readCapacity,
           writeCapacity: writeCapacity,
         };
@@ -51,7 +58,7 @@ export class database {
         tableProps = {
           partitionKey: { name: pk, type: pkType },
           tableName: tableName,
-          removalPolicy: cdk.RemovalPolicy.RETAIN,
+          removalPolicy: removalPolicy,
           readCapacity: readCapacity,
           writeCapacity: writeCapacity,
         };
