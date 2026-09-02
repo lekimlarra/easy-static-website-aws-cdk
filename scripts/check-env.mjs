@@ -53,9 +53,19 @@ if (!deployWebsiteWithCdk) {
 
 const missing = required.filter(([name]) => !value(name));
 const warnings = [];
+// Values that are present but unusable. A missing key and a wrong one both stop
+// a deploy, so both have to stop this script.
+const errors = [];
 
-if (value("httpCertificate") && !value("httpCertificate").startsWith("arn:aws:acm:us-east-1:")) {
-  warnings.push('httpCertificate should be an ACM certificate ARN issued in "us-east-1": CloudFront accepts no other region.');
+// Only a real certificate ARN gets as far as CloudFront, and it rejects
+// anything else minutes into the deploy, so this is an error and not a warning
+// whenever the certificate is going to be used.
+const ACM_CERTIFICATE_ARN = /^arn:aws:acm:us-east-1:\d{12}:certificate\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (value("customDomainNames") && value("httpCertificate") && !ACM_CERTIFICATE_ARN.test(value("httpCertificate"))) {
+  errors.push(`httpCertificate is not a certificate ARN CloudFront can use: "${value("httpCertificate")}".` + ' Expected "arn:aws:acm:us-east-1:<12 digit account>:certificate/<uuid>", and the certificate must live in "us-east-1" whatever the region of the stack.' + " Leave customDomainNames empty to deploy without a custom domain.");
+}
+if (value("httpCertificate") && !value("customDomainNames") && !ACM_CERTIFICATE_ARN.test(value("httpCertificate"))) {
+  warnings.push("httpCertificate does not look like an ACM certificate ARN, but customDomainNames is empty so nothing will use it.");
 }
 if (/ACCOUNT|UUID|your-bucket-name-here|your-custom-url|your-email@/.test(Object.values(process.env).join(" "))) {
   warnings.push("Some values still look like the placeholders from .env.template.");
@@ -85,10 +95,18 @@ console.log(`Login: ${isTrue("createCognito") ? `Cognito${isTrue("createGoogleLo
 
 for (const warning of warnings) console.warn(`WARNING  ${warning}`);
 
+if (errors.length > 0) {
+  console.error("\nInvalid configuration:");
+  for (const error of errors) console.error(`  - ${error}`);
+}
+
 if (missing.length > 0) {
   console.error("\nMissing configuration:");
   for (const [name, hint] of missing) console.error(`  - ${name}: ${hint}`);
   console.error("\nSet them in .env (see .env.template) or as GitHub repository variables/secrets.");
+}
+
+if (errors.length > 0 || missing.length > 0) {
   process.exit(1);
 }
 
