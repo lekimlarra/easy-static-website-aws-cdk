@@ -1,8 +1,11 @@
 import * as cdk from "aws-cdk-lib";
 import path = require("path");
 import { Construct } from "constructs";
-import { RestApi, LambdaIntegration, Period, ApiKey, Stage, Deployment, CognitoUserPoolsAuthorizer, AuthorizationType, MethodOptions, Resource } from "aws-cdk-lib/aws-apigateway";
+import { RestApi, LambdaIntegration, Period, ApiKey, Stage, Deployment, CognitoUserPoolsAuthorizer, AuthorizationType, MethodOptions, Resource, DomainName } from "aws-cdk-lib/aws-apigateway";
 import { Function, Runtime, Code } from "aws-cdk-lib/aws-lambda";
+import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
+import { ARecord, HostedZone, RecordTarget } from "aws-cdk-lib/aws-route53";
+import { ApiGatewayDomain } from "aws-cdk-lib/aws-route53-targets";
 // Custom imports
 import * as utils from "./utils";
 import { Table } from "aws-cdk-lib/aws-dynamodb";
@@ -17,6 +20,15 @@ const apiKeyName = process.env.apiKeyName ?? "";
 const restApiName = process.env.restApiName ?? "cdk-template-api";
 const apiProdBasePath = process.env.apiProdBasePath ?? "prod";
 const openApiExportType = process.env.openApiExportType ?? "yaml";
+// Custom domain for the API (optional), same idea as the website's in
+// react-cdk-base-project-stack.ts: an ACM certificate plus an optional
+// Route 53 record, both behind env vars so the stack still deploys with
+// nothing set and keeps answering on its *.execute-api.amazonaws.com URL.
+const apiDomainName = process.env.apiDomainName ?? "";
+const apiCertificate = process.env.apiCertificate ?? "";
+const createApiDnsRecord = process.env.createApiDnsRecord == "true";
+const apiDnsRecordName = process.env.apiDnsRecordName ?? "";
+const hostedZoneDomain = process.env.hostedZoneDomain ?? "";
 
 export class myApi {
   allLambdaFiles = utils.listFiles(lambdasPath);
@@ -55,6 +67,49 @@ export class myApi {
       deployment: deployment,
       stageName: apiProdBasePath,
     });*/
+
+    // ********************** API CUSTOM DOMAIN **********************
+    // A friendlier name than the raw *.execute-api.<region>.amazonaws.com URL.
+    // Unlike CloudFront (which only ever accepts a us-east-1 certificate), a
+    // REGIONAL API Gateway domain -- the default, and what "mapping" below
+    // creates -- needs its certificate issued in the stack's own region.
+    const region = cdk.Stack.of(scope).region;
+    let apiCustomDomain: DomainName | null = null;
+    if (apiDomainName) {
+      if (!apiCertificate) {
+        throw new Error(`apiDomainName is set to "${apiDomainName}" but apiCertificate is empty. A REGIONAL API Gateway custom domain needs an ACM certificate issued in the stack's own region ("${region}").\n` + "Leave apiDomainName empty to deploy now and keep using the *.execute-api.amazonaws.com URL instead.");
+      }
+      // Same reasoning as httpCertificate in react-cdk-base-project-stack.ts:
+      // catching a certificate CloudFormation would accept and API Gateway
+      // would reject minutes into the deploy turns that into a synth error.
+      const apiCertificatePattern = new RegExp(`^arn:aws:acm:${region}:\\d{12}:certificate/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, "i");
+      if (!apiCertificatePattern.test(apiCertificate)) {
+        throw new Error(`apiCertificate is not a certificate ARN this API Gateway domain can use: "${apiCertificate}".\n` + `Expected "arn:aws:acm:${region}:<12 digit account>:certificate/<uuid>": a REGIONAL API Gateway domain needs the certificate issued in the stack's own region ("${region}"), not us-east-1 like CloudFront.\n` + `List the ones you have with: aws acm list-certificates --region ${region} --query "CertificateSummaryList[].[DomainName,CertificateArn]" --output table\n` + "Leave apiDomainName empty to deploy without a custom API domain.");
+      }
+      apiCustomDomain = new DomainName(scope, "ApiCustomDomain", {
+        domainName: apiDomainName,
+        certificate: Certificate.fromCertificateArn(scope, "ImportedApiCert", apiCertificate),
+        // Maps the domain root straight to this API's deployment stage, so
+        // "https://api.example.com/plants" replaces
+        // "https://xxxx.execute-api.<region>.amazonaws.com/api/plants" --
+        // the stage name disappears into the mapping instead of the URL.
+        mapping: this.api,
+      });
+
+      if (createApiDnsRecord) {
+        if (!hostedZoneDomain) {
+          throw new Error("createApiDnsRecord is true but hostedZoneDomain is empty. Set it to the Route 53 hosted zone that owns your domain.");
+        }
+        const apiZone = HostedZone.fromLookup(scope, "ApiHostedZone", {
+          domainName: hostedZoneDomain,
+        });
+        new ARecord(scope, "ApiAliasRecord", {
+          zone: apiZone,
+          recordName: apiDnsRecordName, // empty means the apex of the hosted zone
+          target: RecordTarget.fromAlias(new ApiGatewayDomain(apiCustomDomain)),
+        });
+      }
+    }
 
     // ********************** COGNITO AUTHORIZER **********************
     let authorizerCongnito: CognitoUserPoolsAuthorizer | null = null;
@@ -225,6 +280,11 @@ export class myApi {
     new cdk.CfnOutput(scope, `APIURL`, {
       value: this.api.url,
     });
+    if (apiCustomDomain) {
+      new cdk.CfnOutput(scope, "ApiCustomDomainUrl", {
+        value: `https://${apiDomainName}`,
+      });
+    }
     new cdk.CfnOutput(scope, "apiKeyArn", {
       value: basicKey.keyArn,
     });

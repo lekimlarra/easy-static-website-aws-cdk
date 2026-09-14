@@ -89,6 +89,8 @@ jobs:
           googleClientSecret: ci-not-a-real-secret
           customDomainNames: example.com,www.example.com
           httpCertificate: arn:aws:acm:us-east-1:111122223333:certificate/11111111-2222-3333-4444-555555555555
+          apiDomainName: api.example.com
+          apiCertificate: arn:aws:acm:eu-west-3:111122223333:certificate/11111111-2222-3333-4444-555555555555
           deployWebsiteWithCdk: "false"
         run: npm run check:env && npm run mysynth
 

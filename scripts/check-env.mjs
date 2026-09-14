@@ -47,6 +47,12 @@ if (value("customDomainNames")) {
 if (isTrue("createDnsRecord")) {
   required.push(["hostedZoneDomain", "Required because createDnsRecord=true: the Route 53 hosted zone to write into."], ["customDomainNames", "Required because createDnsRecord=true: the record has to match a CloudFront alias."], ["awsAccountId", "Required because createDnsRecord=true: hosted zone lookups need an explicit account."]);
 }
+if (value("apiDomainName")) {
+  required.push(["apiCertificate", "Required to serve apiDomainName: an ACM certificate ARN issued in the same region as awsRegion (a REGIONAL API Gateway domain needs it in the stack's own region, unlike CloudFront which always needs us-east-1)."]);
+}
+if (isTrue("createApiDnsRecord")) {
+  required.push(["hostedZoneDomain", "Required because createApiDnsRecord=true: the Route 53 hosted zone to write into."], ["apiDomainName", "Required because createApiDnsRecord=true: the record has to match the API Gateway custom domain."], ["awsAccountId", "Required because createApiDnsRecord=true: hosted zone lookups need an explicit account."]);
+}
 if (!deployWebsiteWithCdk) {
   required.push(["websiteDistPath", 'Required because deployWebsiteWithCdk=false: the folder "npm run s3deploy" uploads.']);
 }

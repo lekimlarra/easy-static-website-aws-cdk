@@ -106,6 +106,12 @@ hostedZoneDomain - The Route 53 hosted zone that owns your domain, for example "
 dnsRecordName - Sub domain for the alias record. Empty means the apex of the zone
 createDnsRecord - Boolean, if true creates the Route 53 A record pointing at CloudFront
 
+# API custom domain (optional)
+apiDomainName - The API's own custom domain, for example "api.example.com"
+apiCertificate - ARN of an ACM certificate for it, issued in awsRegion (not us-east-1: a REGIONAL API Gateway domain needs it in the stack's own region)
+apiDnsRecordName - Sub domain for the alias record. Empty means the apex of the zone. Uses hostedZoneDomain above
+createApiDnsRecord - Boolean, if true creates the Route 53 A record pointing at the API
+
 # Cognito
 createCognito - Boolean, if true, will create a cognito pool and client
 userPoolName - Pool name
@@ -203,6 +209,8 @@ If you are starting from scratch, this is where each value comes from:
 | `httpCertificate` | ARN of an ACM certificate **in `us-east-1`**. List the ones you have with `aws acm list-certificates --region us-east-1 --query "CertificateSummaryList[].[DomainName,CertificateArn]" --output table`, or request one with `aws acm request-certificate --domain-name example.com --subject-alternative-names www.example.com --validation-method DNS --region us-east-1` and validate it before deploying |
 | `customDomainNames` | The domains that certificate covers, comma separated |
 | `hostedZoneDomain` | Your zone in Route 53: `aws route53 list-hosted-zones --query "HostedZones[].Name" --output text` |
+| `apiCertificate` | ARN of an ACM certificate **in `awsRegion`** (not `us-east-1`, unlike `httpCertificate`). List the ones you have with `aws acm list-certificates --region <awsRegion> --query "CertificateSummaryList[].[DomainName,CertificateArn]" --output table`, or request one with `aws acm request-certificate --domain-name api.example.com --validation-method DNS --region <awsRegion>` and validate it before deploying |
+| `apiDomainName` | The domain that certificate covers, for example `api.example.com` |
 | `cloudFrontDistributionId` | Optional. `npm run outputs` prints it after a deploy; leaving it empty just means one extra CloudFormation call |
 | `AWS_ROLE_ARN` | The IAM role you create in step 3 below |
 
@@ -467,6 +475,16 @@ By default CloudFront answers on its own `*.cloudfront.net` name. To serve your 
 1. If your domain is hosted in Route 53, set `hostedZoneDomain` to the zone, `createDnsRecord=true` and, when you want a sub domain, `dnsRecordName`. The stack then creates the A record pointing at the distribution.
 
 `createDnsRecord` needs the stack to know its account and its region, so `awsAccountId` and `awsRegion` must be set. The result of the hosted zone lookup is cached in `cdk.context.json`: commit that file so a CI run can synthesize the stack without querying AWS.
+
+#### API custom domain
+
+By default the API answers on its own `*.execute-api.<awsRegion>.amazonaws.com` URL. To give it a friendlier name instead (`api.example.com`), set up its own ACM certificate and Route 53 record, the same way as the website above — API Gateway's custom domain is a separate resource from the CloudFront one, so it needs its own:
+
+1. Request a certificate in ACM **in the same region you deploy to** (`awsRegion`). This is the opposite rule from the website's: a REGIONAL API Gateway domain — what this stack creates — needs its certificate in its own region, not `us-east-1`.
+1. Put its ARN in `apiCertificate` and the domain in `apiDomainName`.
+1. If your domain is hosted in Route 53, set `hostedZoneDomain` (shared with the website's), `createApiDnsRecord=true` and, when you want a sub domain, `apiDnsRecordName`. The stack then creates the A record pointing at the API.
+
+Once set, the stack's `ApiCustomDomainUrl` output is the API's URL from then on — the stage name (`apiProdBasePath`) disappears into the domain mapping, so it is not part of the URL any more.
 
 #### Website deployment strategies
 
